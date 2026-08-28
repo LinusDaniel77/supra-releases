@@ -64,12 +64,19 @@ jobs:
             source/desktop/package-lock.json
 
       # build_desktop.ps1 reads the build venv's pyvenv.cfg and downloads the
-      # matching python-<version>-embed-amd64.zip. The venv directory name is
-      # .venv313, so this has to be a 3.13 whose embeddable zip python.org
-      # actually publishes.
+      # matching python-<version>-embed-amd64.zip. Pin the PATCH version: a
+      # floating 3.13 silently moved the release builder from the locally proven
+      # 3.13.9 runtime to 3.13.15, whose native CAD stack returned 0 and then
+      # crashed during interpreter teardown with 0xC0000374.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.13.9"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+          enable-cache: true
+          cache-dependency-glob: source/uv.lock
 
       - name: Confirm the release tag matches the source
         shell: bash
@@ -95,10 +102,9 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
-          python -m venv .venv313
-          .\.venv313\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv313\Scripts\python.exe -m pip install .
-          .\.venv313\Scripts\python.exe -c "import silvia; print('silvia import OK')"
+          $env:UV_PROJECT_ENVIRONMENT = ".venv313"
+          uv sync --frozen --no-dev --python python
+          .\.venv313\Scripts\python.exe -c "import sys, silvia; print(sys.version); print('silvia import OK')"
 
       - name: Assemble runtime, selftest, and build the NSIS installer
         working-directory: source
