@@ -77,10 +77,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --prerelease=false
+          # Two separate flags, and clearing only the first is not enough.
+          # GitHub tracks "is this the latest release" (make_latest) apart from
+          # "is this a prerelease": a release created as a prerelease does not
+          # acquire it when the prerelease flag is cleared, so /releases/latest/
+          # keeps serving the PREVIOUS release's bytes while this one looks
+          # promoted everywhere else. Set both, then verify both.
+          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false --latest
+
           state="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
                    --json isPrerelease --jq .isPrerelease)"
           test "$state" = "false"
+
+          # The check that actually matters to a visitor: what does the
+          # evergreen URL resolve to now?
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          echo "latest is now: $latest"
+          test "$latest" = "${{ inputs.tag }}"
           {
             echo "### Promoted \`${{ inputs.tag }}\`"
             echo
