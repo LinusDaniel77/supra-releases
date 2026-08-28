@@ -1,0 +1,90 @@
+name: Promote release
+
+# Clears the prerelease flag, which is the moment a release becomes real:
+# /releases/latest/ and electron-updater both resolve to the newest
+# NON-prerelease, so this single flag is what points the website's download
+# button and every installed copy's update check at these bytes.
+#
+# It refuses to promote a release that is missing any of the assets those two
+# consumers require. Promoting an incomplete release is the failure this repo's
+# tooling exists to prevent: no Supra-Setup.exe means the download button 404s,
+# and no latest.yml means every installed Windows copy asks, gets a 404, and
+# reports "you are up to date" forever.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to promote, e.g. v0.8.0
+        required: true
+        type: string
+      require_mac:
+        description: Also require both macOS DMGs before promoting
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Require the assets that /releases/latest and the updater depend on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+                    --json assets --jq '.assets[].name')"
+          echo "$assets"
+
+          need=(Supra-Setup.exe latest.yml)
+          if [ "${{ inputs.require_mac }}" = "true" ]; then
+            need+=(Supra-Setup-Mac-arm64.dmg Supra-Setup-Mac-x64.dmg)
+          fi
+
+          missing=()
+          for a in "${need[@]}"; do
+            grep -qxF "$a" <<<"$assets" || missing+=("$a")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::${{ inputs.tag }} is missing: ${missing[*]}. Refusing to promote."
+            exit 1
+          fi
+
+          # latest.yml must name a file that is actually attached, or the update
+          # feed 404s and reports success.
+          feed_path="$(gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+                        --pattern latest.yml --output - \
+                       | grep -E '^\s*path:' | head -1 | sed 's/.*path:[[:space:]]*//' | tr -d '\r')"
+          echo "latest.yml path: $feed_path"
+          grep -qxF "$feed_path" <<<"$assets" \
+            || { echo "::error::latest.yml names '$feed_path', which is not attached."; exit 1; }
+
+      - name: Clear the prerelease flag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --prerelease=false
+          state="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+                   --json isPrerelease --jq .isPrerelease)"
+          test "$state" = "false"
+          {
+            echo "### Promoted \`${{ inputs.tag }}\`"
+            echo
+            echo "It is now the newest non-prerelease, so \`/releases/latest/\` and"
+            echo "electron-updater both resolve to it. The website's download button"
+            echo "and every installed copy's update check now point at these bytes."
+          } >> "$GITHUB_STEP_SUMMARY"
