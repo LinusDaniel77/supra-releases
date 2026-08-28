@@ -1,0 +1,99 @@
+name: Create release
+
+# Creates the public release that "Build macOS installer" (and the Windows
+# publish script) upload their verified artifacts into. Both of those refuse to
+# upload unless the release already exists, which is the right order — the
+# release is the container, the binaries are the contents — but it left the
+# container itself as the one step with no automation behind it.
+#
+# Deliberately does NOT build or attach anything. It makes an empty, correctly
+# flagged release and stops. Artifacts arrive only from a workflow that has
+# verified them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v0.8.0 (must match desktop/package.json)
+        required: true
+        type: string
+      title:
+        description: Release title, e.g. Supra 0.8.0
+        required: true
+        type: string
+      prerelease:
+        description: >-
+          Mark as prerelease. Keep this TRUE until the Windows installer and
+          latest.yml are attached. Both electron-updater and
+          /releases/latest/ resolve to the newest NON-prerelease, so a full
+          release without Supra-Setup.exe and latest.yml 404s the website's
+          download button and makes every installed Windows copy report "up to
+          date" forever.
+        required: true
+        default: true
+        type: boolean
+      body:
+        description: Release notes (markdown)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: create-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  create:
+    name: Create ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Refuse to clobber an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::${{ inputs.tag }} already exists. Delete it first, or pick another tag."
+            exit 1
+          fi
+          echo "${{ inputs.tag }} does not exist yet — safe to create."
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          cat >"$notes_file" <<'NOTES'
+          ${{ inputs.body }}
+          NOTES
+          gh release create "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ inputs.title }}" \
+            --notes-file "$notes_file" \
+            ${{ inputs.prerelease && '--prerelease' || '' }}
+
+      - name: Report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          {
+            echo "### Created \`${{ inputs.tag }}\`"
+            echo
+            echo "- Title: ${{ inputs.title }}"
+            echo "- Prerelease: \`${{ inputs.prerelease }}\`"
+            echo "- URL: $url"
+            echo
+            echo "No artifacts attached. Run **Build macOS installer** with \`publish: true\`,"
+            echo "and \`scripts/publish_installer.py\` on Windows, to fill it."
+          } >> "$GITHUB_STEP_SUMMARY"
