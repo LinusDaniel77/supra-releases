@@ -85,6 +85,11 @@ jobs:
 
       - name: Assemble verified native runtime and DMG
         working-directory: source
+        env:
+          # The builder queries python-build-standalone's public release API.
+          # Authenticate with this run's short-lived token to avoid the very
+          # low anonymous GitHub API rate limit during repeated release tests.
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/build_desktop_macos.py --installer
 
       - name: Verify installer and record checksum
