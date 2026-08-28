@@ -1,0 +1,127 @@
+name: Build macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Mac architecture to build
+        required: true
+        default: arm64
+        type: choice
+        options:
+          - arm64
+          - x64
+      source_ref:
+        description: Commit, tag, or branch from the private source repository
+        required: true
+        default: main
+        type: string
+      release_tag:
+        description: Existing public release tag (must match desktop/package.json)
+        required: true
+        default: v0.7.0
+        type: string
+      publish:
+        description: Upload the verified DMG and checksum to the release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-installer-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify macOS ${{ inputs.architecture }}
+    runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
+    timeout-minutes: 120
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out private source with repository-scoped read-only key
+        uses: actions/checkout@v4
+        with:
+          repository: LinusDaniel77/Silvia-Supra
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SUPRA_SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            source/web/package-lock.json
+            source/desktop/package-lock.json
+
+      - name: Confirm release and native runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_arch="${{ inputs.architecture }}"
+          actual_arch="$(node -p 'process.arch')"
+          version="$(node -p "require('./source/desktop/package.json').version")"
+          echo "runner=$(uname -a)"
+          echo "node_arch=$actual_arch expected=$expected_arch"
+          echo "package_version=$version release_tag=${{ inputs.release_tag }}"
+          test "$actual_arch" = "$expected_arch"
+          test "v$version" = "${{ inputs.release_tag }}"
+
+      - name: Build web application
+        working-directory: source/web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install desktop packaging dependencies
+        working-directory: source/desktop
+        run: npm ci
+
+      - name: Assemble verified native runtime and DMG
+        working-directory: source
+        run: python3 scripts/build_desktop_macos.py --installer
+
+      - name: Verify installer and record checksum
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="source/desktop/dist/Supra-Setup-Mac-${{ inputs.architecture }}.dmg"
+          checksum="$dmg.sha256"
+          test -s "$dmg"
+          hdiutil verify "$dmg"
+          shasum -a 256 "$dmg" | tee "$checksum"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Verified macOS ${{ inputs.architecture }} installer"
+            echo
+            echo "- Source: \`${{ inputs.source_ref }}\`"
+            echo "- Release: \`${{ inputs.release_tag }}\`"
+            echo "- DMG: \`$(basename "$dmg")\`"
+            echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
+            echo "- Publish requested: \`${{ inputs.publish }}\`"
+            echo
+            echo "This beta is not Developer ID signed or Apple-notarized; Gatekeeper may warn."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified files to public release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "${{ inputs.release_tag }}" \
+            "${{ steps.artifact.outputs.dmg }}" \
+            "${{ steps.artifact.outputs.checksum }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
