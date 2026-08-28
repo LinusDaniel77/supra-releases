@@ -1,0 +1,160 @@
+name: Build Windows installer
+
+# The Windows counterpart to "Build macOS installer". Until this existed, the
+# Windows half of a release could only be cut from somebody's laptop, which is
+# why scripts/build_desktop.ps1 calls a build venv "a BUILD machine
+# requirement": there was always a machine.
+#
+# Deliberately does NOT call scripts/publish_installer.py. That script verifies
+# by re-downloading the evergreen asset from /releases/latest/download/, and
+# /releases/latest/ skips prereleases — so against a prerelease it would compare
+# the new installer's bytes against the PREVIOUS release's and fail a build that
+# was fine. Uploads here go through `gh release upload` into the tag named on
+# the dispatch, exactly like the macOS workflow. Run publish_installer.py
+# --check from a laptop once the release is promoted, when its assumption holds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit, tag, or branch from the private source repository
+        required: true
+        default: main
+        type: string
+      release_tag:
+        description: Existing public release tag (must match desktop/package.json)
+        required: true
+        default: v0.8.0
+        type: string
+      publish:
+        description: Upload the verified installer, evergreen copy and latest.yml
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out private source with repository-scoped read-only key
+        uses: actions/checkout@v5
+        with:
+          repository: LinusDaniel77/Silvia-Supra
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SUPRA_SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+          path: source
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            source/web/package-lock.json
+            source/desktop/package-lock.json
+
+      # build_desktop.ps1 reads the build venv's pyvenv.cfg and downloads the
+      # matching python-<version>-embed-amd64.zip. The venv directory name is
+      # .venv313, so this has to be a 3.13 whose embeddable zip python.org
+      # actually publishes.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Confirm the release tag matches the source
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./source/desktop/package.json').version")"
+          echo "package_version=$version release_tag=${{ inputs.release_tag }}"
+          test "v$version" = "${{ inputs.release_tag }}"
+
+      - name: Build web application
+        working-directory: source/web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install desktop packaging dependencies
+        working-directory: source/desktop
+        run: npm ci
+
+      # "No build venv at .venv313 (this is a BUILD machine requirement only)."
+      # The runner is the build machine now, so it grows one.
+      - name: Create the build venv the installer is assembled from
+        working-directory: source
+        shell: pwsh
+        run: |
+          python -m venv .venv313
+          .\.venv313\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv313\Scripts\python.exe -m pip install .
+          .\.venv313\Scripts\python.exe -c "import silvia; print('silvia import OK')"
+
+      - name: Assemble runtime, selftest, and build the NSIS installer
+        working-directory: source
+        shell: pwsh
+        run: pwsh -File scripts/build_desktop.ps1 -Installer -Channel release
+
+      - name: Verify installer and record checksum
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source/desktop/dist
+          installer="$(ls Supra-Setup-*.exe | head -1)"
+          test -s "$installer"
+          test -s latest.yml
+
+          # The documented nastiest failure in this chain: electron-builder
+          # quietly writing a DIFFERENT name into latest.yml than the file it
+          # saved. build_desktop.ps1 asserts this too; assert it again here,
+          # because a 404 in the update feed reports to users as "up to date".
+          feed_path="$(grep -E '^\s*path:' latest.yml | head -1 | sed 's/.*path:[[:space:]]*//' | tr -d '\r')"
+          echo "installer=$installer feed_path=$feed_path"
+          test "$feed_path" = "$installer"
+
+          # The website's download button hardcodes the evergreen name.
+          cp "$installer" Supra-Setup.exe
+
+          sha="$(sha256sum "$installer" | cut -d' ' -f1)"
+          echo "$sha  $installer" > "$installer.sha256"
+          echo "installer=$installer" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Verified Windows x64 installer"
+            echo
+            echo "- Source: \`${{ inputs.source_ref }}\`"
+            echo "- Release: \`${{ inputs.release_tag }}\`"
+            echo "- Installer: \`$installer\`"
+            echo "- latest.yml path: \`$feed_path\`"
+            echo "- SHA-256: \`$sha\`"
+            echo "- Publish requested: \`${{ inputs.publish }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified files to public release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source/desktop/dist
+          gh release view "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "${{ inputs.release_tag }}" \
+            "${{ steps.artifact.outputs.installer }}" \
+            "${{ steps.artifact.outputs.installer }}.sha256" \
+            Supra-Setup.exe \
+            latest.yml \
+            INSTALLER_STAMP.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
