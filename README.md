@@ -13,4 +13,6 @@ Supra runs entirely on your machine and uses your own Anthropic API key. The app
 The manual **Build macOS installer** workflow uses GitHub's standard native Mac runners,
 checks out the private source with a read-only repository-scoped deploy key, executes Supra's
 runtime self-test, verifies the DMG, records its SHA-256 digest, and publishes only when the
-operator explicitly selects the `publish` input.
+operator explicitly selects the `publish` input. Public Mac builds require a Developer ID
+Application certificate and Apple notarization credentials. The workflow refuses to publish
+unless `codesign`, `stapler`, and Gatekeeper all accept the packaged app.

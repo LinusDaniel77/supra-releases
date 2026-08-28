@@ -40,7 +40,12 @@ jobs:
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      SUPRA_REQUIRE_MAC_NOTARIZATION: "1"
 
     steps:
       - name: Check out private source with repository-scoped read-only key
@@ -59,6 +64,21 @@ jobs:
           cache-dependency-path: |
             source/web/package-lock.json
             source/desktop/package-lock.json
+
+      - name: Require Developer ID and Apple notarization credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            printf 'Missing required macOS release secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
       - name: Confirm release and native runner architecture
         shell: bash
@@ -101,6 +121,10 @@ jobs:
           checksum="$dmg.sha256"
           test -s "$dmg"
           hdiutil verify "$dmg"
+          app="source/desktop/dist/${{ inputs.architecture == 'arm64' && 'mac-arm64' || 'mac' }}/Supra.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
           shasum -a 256 "$dmg" | tee "$checksum"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
@@ -113,7 +137,7 @@ jobs:
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
             echo "- Publish requested: \`${{ inputs.publish }}\`"
             echo
-            echo "This beta is not Developer ID signed or Apple-notarized; Gatekeeper may warn."
+            echo "Developer ID signature, stapled notarization ticket, and Gatekeeper assessment passed."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload verified files to public release
