@@ -63,8 +63,8 @@ jobs:
             source/web/package-lock.json
             source/desktop/package-lock.json
 
-      # build_desktop.ps1 reads the build venv's pyvenv.cfg and downloads the
-      # matching python-<version>-embed-amd64.zip. Pin the PATCH version: a
+      # build_desktop.ps1 asks the build interpreter for its exact version and
+      # downloads the matching python-<version>-embed-amd64.zip. Pin PATCH: a
       # floating 3.13 silently moved the release builder from the locally proven
       # 3.13.9 runtime to 3.13.15, whose native CAD stack returned 0 and then
       # crashed during interpreter teardown with 0xC0000374.
@@ -102,9 +102,16 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $env:UV_PROJECT_ENVIRONMENT = ".venv313"
           uv sync --frozen --no-dev --python python
-          .\.venv313\Scripts\python.exe -c "import sys, silvia; print(sys.version); print('silvia import OK')"
+          if ($LASTEXITCODE -ne 0) { throw "uv sync failed with exit $LASTEXITCODE" }
+
+          # Import the native CAD stack and require a clean interpreter exit.
+          # Merely printing success is insufficient: incompatible CasADi builds
+          # have printed it and then crashed during Windows process teardown.
+          & .\.venv313\Scripts\python.exe -c "import sys, cadquery, vtkmodules, pydantic, fastapi, anthropic, silvia; print(sys.version); print('frozen release imports OK')"
+          if ($LASTEXITCODE -ne 0) { throw "release import probe failed with exit $LASTEXITCODE" }
 
       - name: Assemble runtime, selftest, and build the NSIS installer
         working-directory: source
