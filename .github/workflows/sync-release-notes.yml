@@ -91,9 +91,19 @@ jobs:
 
           # Read it back. An edit that silently did nothing is the failure this
           # workflow exists to end, so it is not trusted to have worked.
-          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
-          diff <(printf '%s' "$published" | tr -d '\r') <(tr -d '\r' <"$NOTES") >/dev/null \
-            || { echo "::error::The release body does not match $NOTES after editing."; exit 1; }
+          #
+          # Both sides go through command substitution on purpose: GitHub stores
+          # the body with CRLF and without the file's trailing newline, and a
+          # naive diff calls that a mismatch on every single run. A verify step
+          # that always fails is worse than no verify step, because it teaches
+          # whoever sees it to ignore a red run.
+          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r')"
+          expected="$(tr -d '\r' <"$NOTES")"
+          if [ "$published" != "$expected" ]; then
+            echo "::error::The release body does not match $NOTES after editing."
+            diff <(printf '%s\n' "$expected") <(printf '%s\n' "$published") || true
+            exit 1
+          fi
 
           {
             echo "### Synced notes onto \`$TAG\`"
