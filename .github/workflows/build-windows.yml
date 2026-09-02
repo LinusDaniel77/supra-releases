@@ -29,7 +29,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: windows-installer
@@ -123,6 +123,20 @@ jobs:
           uv sync --frozen --no-dev --python python
           if ($LASTEXITCODE -ne 0) { throw "uv sync failed with exit $LASTEXITCODE" }
 
+          # build_desktop.ps1 reads the interpreter version out of pyvenv.cfg to
+          # pick the matching python-<version>-embed-amd64.zip, and its parser
+          # matches `^\s*version\s*=` -- the spelling the stdlib venv writes.
+          # uv writes `version_info = 3.13.9` instead, so the script cannot read
+          # a uv-made venv and stops at "Could not read the Python version from
+          # pyvenv.cfg" before assembling anything. Add the stdlib spelling.
+          $cfg = ".venv313\pyvenv.cfg"
+          if (-not (Select-String -Path $cfg -Pattern '^\s*version\s*=' -Quiet)) {
+            $v = & .\.venv313\Scripts\python.exe -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
+            if ($LASTEXITCODE -ne 0) { throw "could not read the venv interpreter version" }
+            Add-Content -Path $cfg -Value "version = $v"
+            Write-Host "pyvenv.cfg: added stdlib-style 'version = $v' for build_desktop.ps1"
+          }
+
           # Import the native CAD stack and require a clean interpreter exit.
           # Merely printing success is insufficient: incompatible CasADi builds
           # have printed it and then crashed during Windows process teardown.
@@ -151,9 +165,6 @@ jobs:
           feed_path="$(grep -E '^\s*path:' latest.yml | head -1 | sed 's/.*path:[[:space:]]*//' | tr -d '\r')"
           echo "installer=$installer feed_path=$feed_path"
           test "$feed_path" = "$installer"
-
-          # The website's download button hardcodes the evergreen name.
-          cp "$installer" Supra-Setup.exe
 
           sha="$(sha256sum "$installer" | cut -d' ' -f1)"
           echo "$sha  $installer" > "$installer.sha256"

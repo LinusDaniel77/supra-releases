@@ -1,0 +1,73 @@
+name: Promote release
+
+# Promotes public notes only. Customer binaries and updater manifests are
+# forbidden here; protected delivery is activated independently in Supabase.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to promote, e.g. v0.8.0
+        required: true
+        type: string
+      protected_delivery_verified:
+        description: Confirm signed builds are active in protected delivery
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Require protected delivery and forbid public customer binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.protected_delivery_verified }}" = "true" || {
+            echo "::error::Verify the signed protected builds before promoting notes."
+            exit 1
+          }
+          assets="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+                    --json assets --jq '.assets[].name')"
+          echo "$assets"
+          if grep -Eiq '(^Supra-Setup|\.(exe|dmg|msi|pkg)$|^latest(-mac)?\.yml$)' <<<"$assets"; then
+            echo "::error::Public release contains a customer binary or updater manifest."
+            exit 1
+          fi
+
+      - name: Clear the prerelease flag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Set both flags so the notes page is the latest public announcement.
+          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false --latest
+
+          state="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+                   --json isPrerelease --jq .isPrerelease)"
+          test "$state" = "false"
+
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          echo "latest is now: $latest"
+          test "$latest" = "${{ inputs.tag }}"
+          {
+            echo "### Promoted \`${{ inputs.tag }}\`"
+            echo
+            echo "It is now the newest public release-notes page. Customer downloads"
+            echo "and updates remain on Supra's entitlement-gated private service."
+          } >> "$GITHUB_STEP_SUMMARY"

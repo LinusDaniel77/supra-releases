@@ -14,5 +14,8 @@ contains notes and build workflows, never customer binaries or update manifests.
 
 The manual **Build macOS installer** workflow uses GitHub's standard native Mac runners,
 checks out the private source with a read-only repository-scoped deploy key, executes Supra's
-runtime self-test, verifies signing/notarization, records its digests, and publishes to private
-storage only when the operator explicitly selects the `publish` input.
+runtime self-test, verifies the DMG, and records its SHA-256 digest. Mac builds require a
+Developer ID Application certificate and Apple notarization credentials; the workflow refuses
+to continue unless `codesign`, `stapler`, and Gatekeeper accept the packaged app. When the
+operator explicitly selects `publish`, the verified DMG goes to entitlement-gated private
+storage—not a public GitHub release.

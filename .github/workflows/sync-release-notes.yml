@@ -1,0 +1,114 @@
+name: Sync release notes
+
+# The last release step still done by hand in the GitHub UI.
+#
+# Every other step here is a workflow because doing it by hand goes wrong in a
+# way nobody notices: create, build, promote. Editing the notes was left out,
+# and it went wrong the same way. v0.9.0's notes were written when the version
+# was one thing, the version became three, and the notes on the release page
+# went on describing a build that no longer existed — while the correct text
+# sat in the source repo, already written, already reviewed.
+#
+# So this does not take the notes as an input. It reads them from the source
+# repo at docs/RELEASE-NOTES-<version>.md, which makes that file the single
+# place release notes exist. Pasting is what drifts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose notes to sync, e.g. v0.9.0
+        required: true
+        type: string
+      source_ref:
+        description: Commit, tag, or branch of the private source repository
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-release-notes-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync notes onto ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Require the release to already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null \
+            || { echo "::error::$TAG does not exist. Create it first."; exit 1; }
+
+      # Only docs/ is needed, and the source is private: take the least of it.
+      - name: Check out the source repository's release notes
+        uses: actions/checkout@v5
+        with:
+          repository: LinusDaniel77/Silvia-Supra
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.SUPRA_SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+          path: source
+          sparse-checkout: docs
+          sparse-checkout-cone-mode: false
+
+      - name: Locate the notes for this tag
+        id: notes
+        env:
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          path="source/docs/RELEASE-NOTES-$version.md"
+          test -s "$path" || {
+            echo "::error::$path is missing or empty. The notes live in the source repo."
+            exit 1
+          }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Found $(wc -c <"$path") bytes of notes for $version"
+
+      - name: Put them on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          NOTES: ${{ steps.notes.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$NOTES"
+
+          # Read it back. An edit that silently did nothing is the failure this
+          # workflow exists to end, so it is not trusted to have worked.
+          #
+          # Both sides go through command substitution on purpose: GitHub stores
+          # the body with CRLF and without the file's trailing newline, and a
+          # naive diff calls that a mismatch on every single run. A verify step
+          # that always fails is worse than no verify step, because it teaches
+          # whoever sees it to ignore a red run.
+          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r')"
+          expected="$(tr -d '\r' <"$NOTES")"
+          if [ "$published" != "$expected" ]; then
+            echo "::error::The release body does not match $NOTES after editing."
+            diff <(printf '%s\n' "$expected") <(printf '%s\n' "$published") || true
+            exit 1
+          fi
+
+          {
+            echo "### Synced notes onto \`$TAG\`"
+            echo
+            echo "- Source: \`${{ inputs.source_ref }}\`"
+            echo "- Notes: \`docs/RELEASE-NOTES-${{ steps.notes.outputs.version }}.md\`"
+            echo "- Verified: the published body matches the file byte for byte."
+          } >> "$GITHUB_STEP_SUMMARY"

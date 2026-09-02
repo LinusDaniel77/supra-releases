@@ -28,7 +28,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: macos-installer-${{ inputs.architecture }}
@@ -40,7 +40,12 @@ jobs:
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      SUPRA_REQUIRE_MAC_NOTARIZATION: "1"
 
     steps:
       - name: Check out private source with repository-scoped read-only key
@@ -59,6 +64,21 @@ jobs:
           cache-dependency-path: |
             source/web/package-lock.json
             source/desktop/package-lock.json
+
+      - name: Require Developer ID and Apple notarization credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            printf 'Missing required macOS release secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
       - name: Confirm release and native runner architecture
         shell: bash
@@ -83,37 +103,6 @@ jobs:
         working-directory: source/desktop
         run: npm ci
 
-      - name: Configure Developer ID signing and Apple notarization
-        if: ${{ inputs.publish }}
-        shell: bash
-        env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.SUPRA_MAC_CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.SUPRA_MAC_CERTIFICATE_PASSWORD }}
-          API_KEY_P8_BASE64: ${{ secrets.SUPRA_APPLE_API_KEY_P8_BASE64 }}
-          API_KEY_ID: ${{ secrets.SUPRA_APPLE_API_KEY_ID }}
-          API_ISSUER: ${{ secrets.SUPRA_APPLE_API_ISSUER }}
-        run: |
-          set -euo pipefail
-          test -n "$CERTIFICATE_P12_BASE64"
-          test -n "$CERTIFICATE_PASSWORD"
-          test -n "$API_KEY_P8_BASE64"
-          test -n "$API_KEY_ID"
-          test -n "$API_ISSUER"
-          certificate="$RUNNER_TEMP/supra-developer-id.p12"
-          api_key="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
-          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate"
-          printf '%s' "$API_KEY_P8_BASE64" | base64 --decode > "$api_key"
-          chmod 600 "$certificate" "$api_key"
-          {
-            echo "CSC_LINK=$certificate"
-            echo "CSC_KEY_PASSWORD=$CERTIFICATE_PASSWORD"
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=true"
-            echo "APPLE_API_KEY=$api_key"
-            echo "APPLE_API_KEY_ID=$API_KEY_ID"
-            echo "APPLE_API_ISSUER=$API_ISSUER"
-            echo "SUPRA_REQUIRE_MAC_NOTARIZATION=1"
-          } >> "$GITHUB_ENV"
-
       - name: Assemble verified native runtime and DMG
         working-directory: source
         env:
@@ -132,6 +121,10 @@ jobs:
           checksum="$dmg.sha256"
           test -s "$dmg"
           hdiutil verify "$dmg"
+          app="source/desktop/dist/${{ inputs.architecture == 'arm64' && 'mac-arm64' || 'mac' }}/Supra.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
           shasum -a 256 "$dmg" | tee "$checksum"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
@@ -144,7 +137,7 @@ jobs:
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
             echo "- Publish requested: \`${{ inputs.publish }}\`"
             echo
-            echo "Customer publication requires Developer ID signing and Apple notarization."
+            echo "Developer ID signature, stapled notarization ticket, and Gatekeeper assessment passed."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to entitlement-gated private storage
