@@ -17,12 +17,12 @@ on:
         default: main
         type: string
       release_tag:
-        description: Existing public release tag (must match desktop/package.json)
+        description: Version tag (must match desktop/package.json)
         required: true
-        default: v0.7.0
+        default: v0.9.0
         type: string
       publish:
-        description: Upload the verified DMG and checksum to the release
+        description: Publish the signed and notarized DMG to protected storage
         required: true
         default: false
         type: boolean
@@ -83,6 +83,37 @@ jobs:
         working-directory: source/desktop
         run: npm ci
 
+      - name: Configure Developer ID signing and Apple notarization
+        if: ${{ inputs.publish }}
+        shell: bash
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.SUPRA_MAC_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SUPRA_MAC_CERTIFICATE_PASSWORD }}
+          API_KEY_P8_BASE64: ${{ secrets.SUPRA_APPLE_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.SUPRA_APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.SUPRA_APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          test -n "$CERTIFICATE_P12_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$API_KEY_P8_BASE64"
+          test -n "$API_KEY_ID"
+          test -n "$API_ISSUER"
+          certificate="$RUNNER_TEMP/supra-developer-id.p12"
+          api_key="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate"
+          printf '%s' "$API_KEY_P8_BASE64" | base64 --decode > "$api_key"
+          chmod 600 "$certificate" "$api_key"
+          {
+            echo "CSC_LINK=$certificate"
+            echo "CSC_KEY_PASSWORD=$CERTIFICATE_PASSWORD"
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=true"
+            echo "APPLE_API_KEY=$api_key"
+            echo "APPLE_API_KEY_ID=$API_KEY_ID"
+            echo "APPLE_API_ISSUER=$API_ISSUER"
+            echo "SUPRA_REQUIRE_MAC_NOTARIZATION=1"
+          } >> "$GITHUB_ENV"
+
       - name: Assemble verified native runtime and DMG
         working-directory: source
         env:
@@ -113,19 +144,26 @@ jobs:
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
             echo "- Publish requested: \`${{ inputs.publish }}\`"
             echo
-            echo "This beta is not Developer ID signed or Apple-notarized; Gatekeeper may warn."
+            echo "Customer publication requires Developer ID signing and Apple notarization."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload verified files to public release
+      - name: Publish to entitlement-gated private storage
         if: ${{ inputs.publish }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          SUPRA_SUPABASE_URL: ${{ secrets.SUPRA_SUPABASE_URL }}
+          SUPRA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPRA_SUPABASE_SERVICE_ROLE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null
-          gh release upload "${{ inputs.release_tag }}" \
-            "${{ steps.artifact.outputs.dmg }}" \
-            "${{ steps.artifact.outputs.checksum }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+          source_commit="$(git -C source rev-parse HEAD)"
+          version="${{ inputs.release_tag }}"
+          version="${version#v}"
+          python3 source/scripts/publish_installer.py \
+            --artifact "${{ steps.artifact.outputs.dmg }}" \
+            --version "$version" \
+            --platform macos \
+            --architecture "${{ inputs.architecture }}" \
+            --channel stable \
+            --minimum-plan beta \
+            --source-commit "$source_commit" \
+            --signature-status verified

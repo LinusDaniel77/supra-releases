@@ -1,14 +1,8 @@
-name: Create release
+name: Publish public release notes
 
-# Creates the public release that "Build macOS installer" (and the Windows
-# publish script) upload their verified artifacts into. Both of those refuse to
-# upload unless the release already exists, which is the right order — the
-# release is the container, the binaries are the contents — but it left the
-# container itself as the one step with no automation behind it.
-#
-# Deliberately does NOT build or attach anything. It makes an empty, correctly
-# flagged release and stops. Artifacts arrive only from a workflow that has
-# verified them.
+# Publishes notes only. Customer installers and updater manifests must never be
+# attached to this public repository; platform workflows send signed artifacts
+# directly to Supra's entitlement-gated private storage.
 
 on:
   workflow_dispatch:
@@ -23,12 +17,7 @@ on:
         type: string
       prerelease:
         description: >-
-          Mark as prerelease. Keep this TRUE until the Windows installer and
-          latest.yml are attached. Both electron-updater and
-          /releases/latest/ resolve to the newest NON-prerelease, so a full
-          release without Supra-Setup.exe and latest.yml 404s the website's
-          download button and makes every installed Windows copy report "up to
-          date" forever.
+          Mark public notes as prerelease until the protected build is active.
         required: true
         default: true
         type: boolean
@@ -94,6 +83,6 @@ jobs:
             echo "- Prerelease: \`${{ inputs.prerelease }}\`"
             echo "- URL: $url"
             echo
-            echo "No artifacts attached. Run **Build macOS installer** with \`publish: true\`,"
-            echo "and \`scripts/publish_installer.py\` on Windows, to fill it."
+            echo "No artifacts are attached by design. Signed customer builds are delivered"
+            echo "only through Supra's account- and entitlement-gated private storage."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -5,13 +5,9 @@ name: Build Windows installer
 # why scripts/build_desktop.ps1 calls a build venv "a BUILD machine
 # requirement": there was always a machine.
 #
-# Deliberately does NOT call scripts/publish_installer.py. That script verifies
-# by re-downloading the evergreen asset from /releases/latest/download/, and
-# /releases/latest/ skips prereleases — so against a prerelease it would compare
-# the new installer's bytes against the PREVIOUS release's and fail a build that
-# was fine. Uploads here go through `gh release upload` into the tag named on
-# the dispatch, exactly like the macOS workflow. Run publish_installer.py
-# --check from a laptop once the release is promoted, when its assumption holds.
+# Customer binaries are never attached to this public repository. A publish run
+# requires a real Authenticode certificate, uploads to Supra's private Supabase
+# bucket, verifies the stored bytes, and atomically activates the protected feed.
 
 on:
   workflow_dispatch:
@@ -22,12 +18,12 @@ on:
         default: main
         type: string
       release_tag:
-        description: Existing public release tag (must match desktop/package.json)
+        description: Version tag (must match desktop/package.json)
         required: true
-        default: v0.8.0
+        default: v0.9.0
         type: string
       publish:
-        description: Upload the verified installer, evergreen copy and latest.yml
+        description: Publish the signed installer to protected customer storage
         required: true
         default: false
         type: boolean
@@ -96,6 +92,26 @@ jobs:
         working-directory: source/desktop
         run: npm ci
 
+      - name: Configure protected Windows signing
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        env:
+          CERTIFICATE_PFX_BASE64: ${{ secrets.SUPRA_WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SUPRA_WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PFX_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
+            throw "Protected publication requires the Windows code-signing certificate secrets."
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP "supra-release-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificate,
+            [Convert]::FromBase64String($env:CERTIFICATE_PFX_BASE64)
+          )
+          "CSC_LINK=$certificate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CSC_KEY_PASSWORD=$env:CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # "No build venv at .venv313 (this is a BUILD machine requirement only)."
       # The runner is the build machine now, so it grows one.
       - name: Create the build venv the installer is assembled from
@@ -154,20 +170,35 @@ jobs:
             echo "- Publish requested: \`${{ inputs.publish }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload verified files to public release
+      - name: Verify Authenticode before customer publication
+        if: ${{ inputs.publish }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = "source/desktop/dist/${{ steps.artifact.outputs.installer }}"
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne "Valid") {
+            throw "Authenticode is $($signature.Status), not Valid: $($signature.StatusMessage)"
+          }
+          "Authenticode signer: $($signature.SignerCertificate.Subject)"
+
+      - name: Publish to entitlement-gated private storage
         if: ${{ inputs.publish }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          SUPRA_SUPABASE_URL: ${{ secrets.SUPRA_SUPABASE_URL }}
+          SUPRA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPRA_SUPABASE_SERVICE_ROLE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          cd source/desktop/dist
-          gh release view "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null
-          gh release upload "${{ inputs.release_tag }}" \
-            "${{ steps.artifact.outputs.installer }}" \
-            "${{ steps.artifact.outputs.installer }}.sha256" \
-            Supra-Setup.exe \
-            latest.yml \
-            INSTALLER_STAMP.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+          source_commit="$(git -C source rev-parse HEAD)"
+          version="${{ inputs.release_tag }}"
+          version="${version#v}"
+          python source/scripts/publish_installer.py \
+            --artifact "source/desktop/dist/${{ steps.artifact.outputs.installer }}" \
+            --version "$version" \
+            --platform windows \
+            --architecture x64 \
+            --channel stable \
+            --minimum-plan beta \
+            --source-commit "$source_commit" \
+            --signature-status verified
