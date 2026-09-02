@@ -144,7 +144,7 @@ jobs:
         if: ${{ inputs.publish }}
         env:
           SUPRA_SUPABASE_URL: ${{ secrets.SUPRA_SUPABASE_URL }}
-          SUPRA_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPRA_SUPABASE_SERVICE_ROLE_KEY }}
+          SUPRA_SUPABASE_SECRET_KEY: ${{ secrets.SUPRA_SUPABASE_SECRET_KEY }}
         shell: bash
         run: |
           set -euo pipefail
