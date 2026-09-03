@@ -125,7 +125,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          metadata="latest-mac-${{ inputs.architecture }}.yml"
+          cp source/desktop/dist/latest-mac.yml "$metadata"
           gh release upload "${{ inputs.release_tag }}" \
             "${{ steps.artifact.outputs.dmg }}" \
             "${{ steps.artifact.outputs.checksum }}" \
+            "$metadata" \
             --repo "$GITHUB_REPOSITORY" --clobber
+
+          # The updater reads one channel file on both Mac architectures. Once
+          # both native jobs have published their individual metadata, combine
+          # their file lists. electron-updater then selects the URL containing
+          # process.arch, so an Intel Mac can never receive an arm64 DMG (or the
+          # reverse). The first job simply leaves its architecture file behind;
+          # whichever job sees both completes the channel atomically.
+          if gh release download "${{ inputs.release_tag }}" \
+               --repo "$GITHUB_REPOSITORY" \
+               --pattern latest-mac-arm64.yml \
+               --pattern latest-mac-x64.yml \
+               --dir combined-metadata; then
+            node - <<'NODE'
+          const fs = require('fs');
+          const yaml = require('./source/desktop/node_modules/js-yaml');
+          const arm = yaml.load(fs.readFileSync('combined-metadata/latest-mac-arm64.yml', 'utf8'));
+          const x64 = yaml.load(fs.readFileSync('combined-metadata/latest-mac-x64.yml', 'utf8'));
+          if (arm.version !== x64.version) throw new Error('Mac metadata versions differ');
+          const combined = { ...arm, files: [...(arm.files || []), ...(x64.files || [])] };
+          fs.writeFileSync('latest-mac.yml', yaml.dump(combined, { lineWidth: -1 }));
+          NODE
+            gh release upload "${{ inputs.release_tag }}" latest-mac.yml \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            echo "The other architecture metadata is not available yet; its job will finish the channel."
+          fi
