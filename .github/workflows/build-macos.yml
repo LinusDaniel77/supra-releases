@@ -139,11 +139,13 @@ jobs:
           # process.arch, so an Intel Mac can never receive an arm64 DMG (or the
           # reverse). The first job simply leaves its architecture file behind;
           # whichever job sees both completes the channel atomically.
-          if gh release download "${{ inputs.release_tag }}" \
-               --repo "$GITHUB_REPOSITORY" \
-               --pattern latest-mac-arm64.yml \
-               --pattern latest-mac-x64.yml \
-               --dir combined-metadata; then
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern latest-mac-arm64.yml \
+            --pattern latest-mac-x64.yml \
+            --dir combined-metadata || true
+          if [[ -f combined-metadata/latest-mac-arm64.yml && \
+                -f combined-metadata/latest-mac-x64.yml ]]; then
             node - <<'NODE'
           const fs = require('fs');
           const yaml = require('./source/desktop/node_modules/js-yaml');
