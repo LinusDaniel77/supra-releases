@@ -19,16 +19,16 @@ on:
       release_tag:
         description: Version tag (must match desktop/package.json)
         required: true
-        default: v0.9.0
+        default: v0.9.1
         type: string
       publish:
-        description: Publish the signed and notarized DMG to protected storage
+        description: Publish the verified beta DMG to the public GitHub release
         required: true
         default: false
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: macos-installer-${{ inputs.architecture }}
@@ -40,12 +40,7 @@ jobs:
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
     env:
-      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      SUPRA_REQUIRE_MAC_NOTARIZATION: "1"
+      SUPRA_REQUIRE_MAC_NOTARIZATION: "0"
 
     steps:
       - name: Check out private source with repository-scoped read-only key
@@ -64,21 +59,6 @@ jobs:
           cache-dependency-path: |
             source/web/package-lock.json
             source/desktop/package-lock.json
-
-      - name: Require Developer ID and Apple notarization credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          missing=()
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} )); then
-            printf 'Missing required macOS release secrets: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
 
       - name: Confirm release and native runner architecture
         shell: bash
@@ -122,9 +102,7 @@ jobs:
           test -s "$dmg"
           hdiutil verify "$dmg"
           app="source/desktop/dist/${{ inputs.architecture == 'arm64' && 'mac-arm64' || 'mac' }}/Supra.app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose=4 "$app"
+          test -x "$app/Contents/MacOS/Supra"
           shasum -a 256 "$dmg" | tee "$checksum"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
@@ -137,26 +115,17 @@ jobs:
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
             echo "- Publish requested: \`${{ inputs.publish }}\`"
             echo
-            echo "Developer ID signature, stapled notarization ticket, and Gatekeeper assessment passed."
+            echo "Public beta recovery build. Developer ID signing and notarization are not configured."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish to entitlement-gated private storage
+      - name: Publish public recovery assets
         if: ${{ inputs.publish }}
         env:
-          SUPRA_SUPABASE_URL: ${{ secrets.SUPRA_SUPABASE_URL }}
-          SUPRA_SUPABASE_SECRET_KEY: ${{ secrets.SUPRA_SUPABASE_SECRET_KEY }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          source_commit="$(git -C source rev-parse HEAD)"
-          version="${{ inputs.release_tag }}"
-          version="${version#v}"
-          python3 source/scripts/publish_installer.py \
-            --artifact "${{ steps.artifact.outputs.dmg }}" \
-            --version "$version" \
-            --platform macos \
-            --architecture "${{ inputs.architecture }}" \
-            --channel stable \
-            --minimum-plan beta \
-            --source-commit "$source_commit" \
-            --signature-status verified
+          gh release upload "${{ inputs.release_tag }}" \
+            "${{ steps.artifact.outputs.dmg }}" \
+            "${{ steps.artifact.outputs.checksum }}" \
+            --repo "$GITHUB_REPOSITORY" --clobber

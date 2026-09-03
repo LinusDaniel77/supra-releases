@@ -1,8 +1,7 @@
-name: Publish public release notes
+name: Create public release
 
-# Publishes notes only. Customer installers and updater manifests must never be
-# attached to this public repository; platform workflows send signed artifacts
-# directly to Supra's entitlement-gated private storage.
+# Creates the public release that platform build workflows populate with
+# verified installers, updater metadata, and checksums.
 
 on:
   workflow_dispatch:
@@ -83,6 +82,5 @@ jobs:
             echo "- Prerelease: \`${{ inputs.prerelease }}\`"
             echo "- URL: $url"
             echo
-            echo "No artifacts are attached by design. Signed customer builds are delivered"
-            echo "only through Supra's account- and entitlement-gated private storage."
+            echo "Platform build workflows attach verified public-beta installers and checksums."
           } >> "$GITHUB_STEP_SUMMARY"

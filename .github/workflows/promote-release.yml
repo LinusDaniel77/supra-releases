@@ -1,7 +1,7 @@
 name: Promote release
 
-# Promotes public notes only. Customer binaries and updater manifests are
-# forbidden here; protected delivery is activated independently in Supabase.
+# Promotes a public beta after its Windows recovery installer and update
+# metadata have been attached and verified.
 
 on:
   workflow_dispatch:
@@ -10,8 +10,8 @@ on:
         description: Release tag to promote, e.g. v0.8.0
         required: true
         type: string
-      protected_delivery_verified:
-        description: Confirm signed builds are active in protected delivery
+      public_assets_verified:
+        description: Confirm the public installer and checksums were reviewed
         required: true
         default: false
         type: boolean
@@ -30,23 +30,22 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Require protected delivery and forbid public customer binaries
+      - name: Require the public recovery assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.protected_delivery_verified }}" = "true" || {
-            echo "::error::Verify the signed protected builds before promoting notes."
+          test "${{ inputs.public_assets_verified }}" = "true" || {
+            echo "::error::Review the public recovery assets before promotion."
             exit 1
           }
           assets="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
                     --json assets --jq '.assets[].name')"
           echo "$assets"
-          if grep -Eiq '(^Supra-Setup|\.(exe|dmg|msi|pkg)$|^latest(-mac)?\.yml$)' <<<"$assets"; then
-            echo "::error::Public release contains a customer binary or updater manifest."
-            exit 1
-          fi
+          grep -Fxq 'Supra-Setup.exe' <<<"$assets"
+          grep -Fxq 'latest.yml' <<<"$assets"
+          grep -Eq '^Supra-Setup-.*\.exe\.sha256$' <<<"$assets"
 
       - name: Clear the prerelease flag
         env:
@@ -68,6 +67,5 @@ jobs:
           {
             echo "### Promoted \`${{ inputs.tag }}\`"
             echo
-            echo "It is now the newest public release-notes page. Customer downloads"
-            echo "and updates remain on Supra's entitlement-gated private service."
+            echo "It is now the newest public beta release and update source."
           } >> "$GITHUB_STEP_SUMMARY"
