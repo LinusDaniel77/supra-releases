@@ -3,6 +3,18 @@
 Release artifacts for [Supra](https://supra.silviaai.dev), the local-first AI
 mechanical engineer.
 
+## Separate Blender-native preview
+
+[Supra 0.10.0-alpha.1](https://github.com/LinusDaniel77/supra-releases/releases/tag/v0.10.0-alpha.1)
+is an experimental Windows launcher/source kit requiring a separate Blender 5.1.2
+installation. It uses Blender's actual native interface and a fresh GPL-licensed
+Supra extension. Complete extension source, tests, checksums and a manifest are
+included. This is **not** a standalone installer or the full AI CAD product:
+AI generation and exact B-rep/STEP CAD are not connected. It does not replace the
+stable 0.9.1 installers or updater manifests.
+
+## Stable downloads
+
 The current free beta requires no Supra account, subscription, entitlement, or
 device activation. Versioned Windows and macOS installers, updater metadata,
 release notes, and SHA-256 checksums are public release assets.
