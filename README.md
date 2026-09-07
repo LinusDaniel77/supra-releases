@@ -5,13 +5,22 @@ mechanical engineer.
 
 ## Separate Blender-native preview
 
-[Supra 0.10.0-alpha.1](https://github.com/LinusDaniel77/supra-releases/releases/tag/v0.10.0-alpha.1)
-is an experimental Windows launcher/source kit requiring a separate Blender 5.1.2
-installation. It uses Blender's actual native interface and a fresh GPL-licensed
-Supra extension. Complete extension source, tests, checksums and a manifest are
-included. This is **not** a standalone installer or the full AI CAD product:
-AI generation and exact B-rep/STEP CAD are not connected. It does not replace the
-stable 0.9.1 installers or updater manifests.
+[Supra 0.10.0-alpha.2](https://github.com/LinusDaniel77/supra-releases/releases/tag/v0.10.0-alpha.2)
+is a self-contained Windows x64 portable preview. Extract the entire portable ZIP
+and open **Supra.exe**. No separate Blender installation or Supra account is needed:
+the unmodified Blender 5.1.2 runtime is bundled privately.
+
+It includes focused native workspaces, part/project metadata, inspection snapshots
+and live bevel, pattern, mirror and mesh Boolean controls. This is **not** an
+installer or the full AI CAD product: exact B-rep/STEP CAD and AI generation are
+not connected. Stable 0.9.1 installers and updater manifests are unchanged.
+
+The release includes the complete new Supra integration/launcher source, matching
+Blender core and library-source archives, build instructions, preserved licenses,
+checksums and a verification manifest. 29 runtime checks and 9 packaging tests pass.
+It is unsigned; native visual verification and clean-machine testing are incomplete.
+Read the release limitations before using it. Download page:
+[Native preview](https://supra.silviaai.dev/native-preview/).
 
 ## Stable downloads
 
