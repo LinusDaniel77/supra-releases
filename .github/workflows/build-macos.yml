@@ -83,6 +83,10 @@ jobs:
         working-directory: source/desktop
         run: npm ci
 
+      - name: Test updater, native signature, and rollback paths
+        working-directory: source/desktop
+        run: npm run check
+
       - name: Assemble verified native runtime and DMG
         working-directory: source
         env:

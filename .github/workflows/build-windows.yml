@@ -91,6 +91,10 @@ jobs:
         working-directory: source/desktop
         run: npm ci
 
+      - name: Test desktop updater and runtime contracts
+        working-directory: source/desktop
+        run: npm run check
+
       # "No build venv at .venv313 (this is a BUILD machine requirement only)."
       # The runner is the build machine now, so it grows one.
       - name: Create the build venv the installer is assembled from
