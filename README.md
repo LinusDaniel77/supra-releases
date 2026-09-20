@@ -68,3 +68,10 @@ logs are retained as workflow artifacts for 14 days. It does not rebuild or publ
 installers, require source/signing secrets, or make paid model calls. These checks
 do not prove interactive CAD operation, the updater's restart-button handoff,
 trusted Windows publisher status, Apple notarization, or OS reputation prompts.
+
+For 0.11.5, all four jobs passed in the
+[published-installer verification run](https://github.com/LinusDaniel77/supra-releases/actions/runs/35493358687):
+Windows clean install, Windows 0.11.3-to-0.11.5 replacement with profile-data
+preservation, Apple silicon clean install, and Intel Mac clean install. This is
+GitHub-hosted runner evidence, not a claim that end-user OS trust prompts or the
+interactive updater restart flow have been tested. No release bytes were changed.
