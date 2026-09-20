@@ -53,3 +53,18 @@ replace a writable installed copy. Copies running from the DMG or a temporary
 location retain the manual download path. Older Mac versions may need a one-time
 manual update. The ad-hoc seal is an integrity check, not an Apple Developer ID
 identity or notarization. Do not disable OS security protections.
+
+## Published-installer verification
+
+The manual **Verify published installers** workflow downloads existing stable
+release artifacts and checks their GitHub SHA-256 digests before execution. On
+disposable hosted runners it tests fresh Windows installation, Windows installer
+replacement from a specified older version with an actual-profile data marker,
+and native Intel/Apple-silicon DMG installation. Each installed app must cold-start
+its bundled backend twice. Mac bundle seals must remain valid after launch.
+
+The verifier refuses personal machines and self-hosted runners. Reports and smoke
+logs are retained as workflow artifacts for 14 days. It does not rebuild or publish
+installers, require source/signing secrets, or make paid model calls. These checks
+do not prove interactive CAD operation, the updater's restart-button handoff,
+trusted Windows publisher status, Apple notarization, or OS reputation prompts.

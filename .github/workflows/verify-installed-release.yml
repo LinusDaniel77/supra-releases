@@ -1,0 +1,68 @@
+name: Verify published installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published stable release to install and launch
+        type: string
+        required: true
+        default: v0.11.5
+      previous_tag:
+        description: Published Windows version to upgrade from
+        type: string
+        required: true
+        default: v0.11.3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-installed-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: ${{ matrix.name }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-clean
+            runner: windows-latest
+            upgrade: 'false'
+          - name: windows-upgrade
+            runner: windows-latest
+            upgrade: 'true'
+          - name: mac-arm64-clean
+            runner: macos-15
+            upgrade: 'false'
+          - name: mac-x64-clean
+            runner: macos-15-intel
+            upgrade: 'false'
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test verifier safety and input contracts
+        run: python -m unittest discover -s scripts -p "test_*.py" -v
+      - name: Download, verify, install, and cold-launch published application
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          TEST_UPGRADE: ${{ matrix.upgrade }}
+        run: python scripts/verify_installed_release.py
+      - name: Preserve verification evidence (not installers)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-${{ matrix.name }}
+          path: installed-evidence/
+          if-no-files-found: warn
+          retention-days: 14
