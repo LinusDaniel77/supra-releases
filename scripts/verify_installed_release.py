@@ -24,6 +24,11 @@ def version(tag):
     return tag[1:]
 
 
+def windows_version_matches(installed, tag):
+    # Windows VERSIONINFO may render the reserved fourth component as .0.
+    return installed in (version(tag), version(tag) + ".0")
+
+
 def require_hosted_runner(env):
     if env.get("GITHUB_ACTIONS") != "true" or env.get("RUNNER_ENVIRONMENT") != "github-hosted":
         raise RuntimeError("Installation is restricted to disposable GitHub-hosted runners")
@@ -114,7 +119,7 @@ def install_windows(tag, root, evidence, report):
     escaped = str(executable).replace("'", "''")
     installed_version = run(["pwsh", "-NoProfile", "-Command",
                              f"(Get-Item -LiteralPath '{escaped}').VersionInfo.ProductVersion"]).strip()
-    if installed_version.split("+")[0] != version(tag):
+    if not windows_version_matches(installed_version, tag):
         raise RuntimeError(f"Installed version {installed_version!r} does not match {tag}")
     output = smoke(executable, f"{tag}-installed-start", evidence, report)
     return executable, output

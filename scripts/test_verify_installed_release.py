@@ -3,10 +3,16 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from verify_installed_release import require_hosted_runner, verify_asset, version
+from verify_installed_release import require_hosted_runner, verify_asset, version, windows_version_matches
 
 
 class VerifierContracts(unittest.TestCase):
+    def test_windows_versioninfo_reserved_component(self):
+        for valid in ("0.11.5", "0.11.5.0"):
+            self.assertTrue(windows_version_matches(valid, "v0.11.5"))
+        for invalid in ("0.11.3.0", "0.11.5.1", "0.11.5.0.0", "0.11.5-rc.1"):
+            self.assertFalse(windows_version_matches(invalid, "v0.11.5"))
+
     def test_stable_versions_only(self):
         self.assertEqual(version("v0.11.5"), "0.11.5")
         for invalid in ("main", "v1.2.3-rc.1", "v01.2.3", "../v1.2.3", "v1.2.3\n", "v1.2.3;whoami"):
