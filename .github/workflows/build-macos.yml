@@ -78,6 +78,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm run kernel:bundle
 
       - name: Install desktop packaging dependencies
         working-directory: source/desktop
