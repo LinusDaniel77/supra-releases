@@ -38,19 +38,38 @@ jobs:
     name: Create ${{ inputs.tag }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Inputs reach the shell ONLY through these variables, never as ${{ }}
+    # spliced into a script. GitHub substitutes an expression into the script
+    # text before bash parses it, so a title containing $(...) or a quote, or a
+    # release-notes line reading NOTES (which ended the old heredoc early),
+    # would have run as shell with this job's contents: write token.
+    env:
+      TAG: ${{ inputs.tag }}
+      TITLE: ${{ inputs.title }}
+      BODY: ${{ inputs.body }}
+      PRERELEASE: ${{ inputs.prerelease }}
 
     steps:
+      - name: Refuse a malformed tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag must look like v1.2.3 or v1.2.3-beta.1; got: $TAG"
+            exit 1
+          fi
+
       - name: Refuse to clobber an existing release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::${{ inputs.tag }} already exists. Delete it first, or pick another tag."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Delete it first, or pick another tag."
             exit 1
           fi
-          echo "${{ inputs.tag }} does not exist yet — safe to create."
+          echo "$TAG does not exist yet: safe to create."
 
       - name: Create the release
         env:
@@ -59,14 +78,14 @@ jobs:
         run: |
           set -euo pipefail
           notes_file="$(mktemp)"
-          cat >"$notes_file" <<'NOTES'
-          ${{ inputs.body }}
-          NOTES
-          gh release create "${{ inputs.tag }}" \
+          printf '%s\n' "$BODY" >"$notes_file"
+          prerelease_flag=()
+          if [ "$PRERELEASE" = "true" ]; then prerelease_flag=(--prerelease); fi
+          gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "${{ inputs.title }}" \
+            --title "$TITLE" \
             --notes-file "$notes_file" \
-            ${{ inputs.prerelease && '--prerelease' || '' }}
+            "${prerelease_flag[@]}"
 
       - name: Report
         env:
@@ -74,12 +93,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          url="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
           {
-            echo "### Created \`${{ inputs.tag }}\`"
+            echo "### Created \`$TAG\`"
             echo
-            echo "- Title: ${{ inputs.title }}"
-            echo "- Prerelease: \`${{ inputs.prerelease }}\`"
+            echo "- Title: $TITLE"
+            echo "- Prerelease: \`$PRERELEASE\`"
             echo "- URL: $url"
             echo
             echo "Platform build workflows attach verified public-beta installers and checksums."

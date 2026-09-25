@@ -40,9 +40,16 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
 
+    # Inputs reach run: scripts only through these variables. An expression
+    # spliced into a script is substituted before the shell parses it, so a
+    # value with a quote or $(...) in it would run as code.
+    env:
+      PUBLISH: ${{ inputs.publish }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_REF: ${{ inputs.source_ref }}
     steps:
       - name: Check out private source with repository-scoped read-only key
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: LinusDaniel77/Silvia-Supra
           ref: ${{ inputs.source_ref }}
@@ -50,7 +57,7 @@ jobs:
           persist-credentials: false
           path: source
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -63,11 +70,11 @@ jobs:
       # floating 3.13 silently moved the release builder from the locally proven
       # 3.13.9 runtime to 3.13.15, whose native CAD stack returned 0 and then
       # crashed during interpreter teardown with 0xC0000374.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13.9"
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: "0.11.32"
           enable-cache: true
@@ -78,8 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./source/desktop/package.json').version")"
-          echo "package_version=$version release_tag=${{ inputs.release_tag }}"
-          test "v$version" = "${{ inputs.release_tag }}"
+          echo "package_version=$version release_tag=${RELEASE_TAG}"
+          test "v$version" = "${RELEASE_TAG}"
 
       - name: Build web application
         working-directory: source/web
@@ -157,12 +164,12 @@ jobs:
           {
             echo "### Verified Windows x64 installer"
             echo
-            echo "- Source: \`${{ inputs.source_ref }}\`"
-            echo "- Release: \`${{ inputs.release_tag }}\`"
+            echo "- Source: \`${SOURCE_REF}\`"
+            echo "- Release: \`${RELEASE_TAG}\`"
             echo "- Installer: \`$installer\`"
             echo "- latest.yml path: \`$feed_path\`"
             echo "- SHA-256: \`$sha\`"
-            echo "- Publish requested: \`${{ inputs.publish }}\`"
+            echo "- Publish requested: \`${PUBLISH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish public recovery assets
@@ -174,7 +181,7 @@ jobs:
           set -euo pipefail
           cd source/desktop/dist
           cp "${{ steps.artifact.outputs.installer }}" Supra-Setup.exe
-          gh release upload "${{ inputs.release_tag }}" \
+          gh release upload "${RELEASE_TAG}" \
             "${{ steps.artifact.outputs.installer }}" \
             "${{ steps.artifact.outputs.installer }}.sha256" \
             Supra-Setup.exe latest.yml INSTALLER_STAMP.json \

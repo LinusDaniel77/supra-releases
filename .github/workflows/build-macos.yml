@@ -39,12 +39,19 @@ jobs:
     name: Build and verify macOS ${{ inputs.architecture }}
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
+    # Inputs reach run: scripts only through these variables. An expression
+    # spliced into a script is substituted before the shell parses it, so a
+    # value with a quote or $(...) in it would run as code.
     env:
+      ARCHITECTURE: ${{ inputs.architecture }}
+      PUBLISH: ${{ inputs.publish }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_REF: ${{ inputs.source_ref }}
       SUPRA_REQUIRE_MAC_NOTARIZATION: "0"
 
     steps:
       - name: Check out private source with repository-scoped read-only key
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: LinusDaniel77/Silvia-Supra
           ref: ${{ inputs.source_ref }}
@@ -52,7 +59,7 @@ jobs:
           persist-credentials: false
           path: source
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -64,14 +71,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_arch="${{ inputs.architecture }}"
+          expected_arch="${ARCHITECTURE}"
           actual_arch="$(node -p 'process.arch')"
           version="$(node -p "require('./source/desktop/package.json').version")"
           echo "runner=$(uname -a)"
           echo "node_arch=$actual_arch expected=$expected_arch"
-          echo "package_version=$version release_tag=${{ inputs.release_tag }}"
+          echo "package_version=$version release_tag=${RELEASE_TAG}"
           test "$actual_arch" = "$expected_arch"
-          test "v$version" = "${{ inputs.release_tag }}"
+          test "v$version" = "${RELEASE_TAG}"
 
       - name: Build web application
         working-directory: source/web
@@ -102,23 +109,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg="source/desktop/dist/Supra-Setup-Mac-${{ inputs.architecture }}.dmg"
+          dmg="source/desktop/dist/Supra-Setup-Mac-${ARCHITECTURE}.dmg"
           checksum="$dmg.sha256"
           test -s "$dmg"
           hdiutil verify "$dmg"
-          app="source/desktop/dist/${{ inputs.architecture == 'arm64' && 'mac-arm64' || 'mac' }}/Supra.app"
+          if [ "$ARCHITECTURE" = "arm64" ]; then app_dir="mac-arm64"; else app_dir="mac"; fi
+          app="source/desktop/dist/${app_dir}/Supra.app"
           test -x "$app/Contents/MacOS/Supra"
           shasum -a 256 "$dmg" | tee "$checksum"
           echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
           {
-            echo "### Verified macOS ${{ inputs.architecture }} installer"
+            echo "### Verified macOS ${ARCHITECTURE} installer"
             echo
-            echo "- Source: \`${{ inputs.source_ref }}\`"
-            echo "- Release: \`${{ inputs.release_tag }}\`"
+            echo "- Source: \`${SOURCE_REF}\`"
+            echo "- Release: \`${RELEASE_TAG}\`"
             echo "- DMG: \`$(basename "$dmg")\`"
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
-            echo "- Publish requested: \`${{ inputs.publish }}\`"
+            echo "- Publish requested: \`${PUBLISH}\`"
             echo
             echo "Public beta recovery build. Developer ID signing and notarization are not configured."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -130,9 +138,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          metadata="latest-mac-${{ inputs.architecture }}.yml"
+          metadata="latest-mac-${ARCHITECTURE}.yml"
           cp source/desktop/dist/latest-mac.yml "$metadata"
-          gh release upload "${{ inputs.release_tag }}" \
+          gh release upload "${RELEASE_TAG}" \
             "${{ steps.artifact.outputs.dmg }}" \
             "${{ steps.artifact.outputs.checksum }}" \
             "$metadata" \
@@ -144,7 +152,7 @@ jobs:
           # process.arch, so an Intel Mac can never receive an arm64 DMG (or the
           # reverse). The first job simply leaves its architecture file behind;
           # whichever job sees both completes the channel atomically.
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "${RELEASE_TAG}" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern latest-mac-arm64.yml \
             --pattern latest-mac-x64.yml \
@@ -160,7 +168,7 @@ jobs:
           const combined = { ...arm, files: [...(arm.files || []), ...(x64.files || [])] };
           fs.writeFileSync('latest-mac.yml', yaml.dump(combined, { lineWidth: -1 }));
           NODE
-            gh release upload "${{ inputs.release_tag }}" latest-mac.yml \
+            gh release upload "${RELEASE_TAG}" latest-mac.yml \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             echo "The other architecture metadata is not available yet; its job will finish the channel."
