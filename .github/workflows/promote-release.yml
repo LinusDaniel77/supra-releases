@@ -29,6 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # Inputs reach run: scripts only through these variables. An expression
+    # spliced into a script is substituted before the shell parses it, so a
+    # value with a quote or $(...) in it would run as code.
+    env:
+      PUBLIC_ASSETS_VERIFIED: ${{ inputs.public_assets_verified }}
+      TAG: ${{ inputs.tag }}
     steps:
       - name: Require the public recovery assets
         env:
@@ -36,11 +42,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.public_assets_verified }}" = "true" || {
+          test "${PUBLIC_ASSETS_VERIFIED}" = "true" || {
             echo "::error::Review the public recovery assets before promotion."
             exit 1
           }
-          assets="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+          assets="$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" \
                     --json assets --jq '.assets[].name')"
           echo "$assets"
           grep -Fxq 'Supra-Setup.exe' <<<"$assets"
@@ -54,18 +60,18 @@ jobs:
         run: |
           set -euo pipefail
           # Set both flags so the notes page is the latest public announcement.
-          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+          gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" \
             --prerelease=false --latest
 
-          state="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+          state="$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" \
                    --json isPrerelease --jq .isPrerelease)"
           test "$state" = "false"
 
           latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           echo "latest is now: $latest"
-          test "$latest" = "${{ inputs.tag }}"
+          test "$latest" = "${TAG}"
           {
-            echo "### Promoted \`${{ inputs.tag }}\`"
+            echo "### Promoted \`${TAG}\`"
             echo
             echo "It is now the newest public beta release and update source."
           } >> "$GITHUB_STEP_SUMMARY"

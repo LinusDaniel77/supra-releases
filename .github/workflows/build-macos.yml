@@ -39,12 +39,19 @@ jobs:
     name: Build and verify macOS ${{ inputs.architecture }}
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
+    # Inputs reach run: scripts only through these variables. An expression
+    # spliced into a script is substituted before the shell parses it, so a
+    # value with a quote or $(...) in it would run as code.
     env:
+      ARCHITECTURE: ${{ inputs.architecture }}
+      PUBLISH: ${{ inputs.publish }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_REF: ${{ inputs.source_ref }}
       SUPRA_REQUIRE_MAC_NOTARIZATION: "0"
 
     steps:
       - name: Check out private source with repository-scoped read-only key
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: LinusDaniel77/Silvia-Supra
           ref: ${{ inputs.source_ref }}
@@ -52,9 +59,9 @@ jobs:
           persist-credentials: false
           path: source
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             source/web/package-lock.json
@@ -64,14 +71,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_arch="${{ inputs.architecture }}"
+          expected_arch="${ARCHITECTURE}"
           actual_arch="$(node -p 'process.arch')"
           version="$(node -p "require('./source/desktop/package.json').version")"
           echo "runner=$(uname -a)"
           echo "node_arch=$actual_arch expected=$expected_arch"
-          echo "package_version=$version release_tag=${{ inputs.release_tag }}"
+          echo "package_version=$version release_tag=${RELEASE_TAG}"
           test "$actual_arch" = "$expected_arch"
-          test "v$version" = "${{ inputs.release_tag }}"
+          test "v$version" = "${RELEASE_TAG}"
 
       - name: Build web application
         working-directory: source/web
@@ -102,23 +109,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg="source/desktop/dist/Supra-Setup-Mac-${{ inputs.architecture }}.dmg"
+          dmg="source/desktop/dist/Supra-Setup-Mac-${ARCHITECTURE}.dmg"
           checksum="$dmg.sha256"
           test -s "$dmg"
           hdiutil verify "$dmg"
-          app="source/desktop/dist/${{ inputs.architecture == 'arm64' && 'mac-arm64' || 'mac' }}/Supra.app"
+          if [ "$ARCHITECTURE" = "arm64" ]; then app_dir="mac-arm64"; else app_dir="mac"; fi
+          app="source/desktop/dist/${app_dir}/Supra.app"
           test -x "$app/Contents/MacOS/Supra"
+          # The oldest macOS this build runs on, read from the app itself. The
+          # publish step writes it into the update feed so an installed app on
+          # an older Mac is never offered an update that will not open there.
+          min_macos="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")"
+          test -n "$min_macos"
           shasum -a 256 "$dmg" | tee "$checksum"
-          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
-          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
           {
-            echo "### Verified macOS ${{ inputs.architecture }} installer"
+            echo "dmg=$dmg"
+            echo "checksum=$checksum"
+            echo "min_macos=$min_macos"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Verified macOS ${ARCHITECTURE} installer"
             echo
-            echo "- Source: \`${{ inputs.source_ref }}\`"
-            echo "- Release: \`${{ inputs.release_tag }}\`"
+            echo "- Source: \`${SOURCE_REF}\`"
+            echo "- Release: \`${RELEASE_TAG}\`"
             echo "- DMG: \`$(basename "$dmg")\`"
             echo "- SHA-256: \`$(cut -d ' ' -f 1 "$checksum")\`"
-            echo "- Publish requested: \`${{ inputs.publish }}\`"
+            echo "- Minimum macOS: \`$min_macos\`"
+            echo "- Publish requested: \`${PUBLISH}\`"
             echo
             echo "Public beta recovery build. Developer ID signing and notarization are not configured."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -127,12 +144,44 @@ jobs:
         if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ github.token }}
+          MIN_MACOS: ${{ steps.artifact.outputs.min_macos }}
         shell: bash
         run: |
           set -euo pipefail
-          metadata="latest-mac-${{ inputs.architecture }}.yml"
+          metadata="latest-mac-${ARCHITECTURE}.yml"
           cp source/desktop/dist/latest-mac.yml "$metadata"
-          gh release upload "${{ inputs.release_tag }}" \
+
+          # THE UPDATE FEED CARRIES THE OS FLOOR, IN DARWIN TERMS. electron-builder
+          # sets LSMinimumSystemVersion in the app but writes no
+          # minimumSystemVersion into latest-mac.yml, so every installed app was
+          # offered every update whatever its Mac could run. electron-updater
+          # skips an update whose minimumSystemVersion is above os.release(),
+          # and on a Mac os.release() is the DARWIN kernel version (macOS 12 is
+          # Darwin 21), so a floor written as "12.0.0" would compare Darwin 20
+          # (macOS 11) as newer and offer the update anyway. An unparseable
+          # value is also treated as "offer it". So the macOS floor is
+          # translated to its Darwin version and written as full semver, and a
+          # floor this table does not know stops the publish instead of
+          # shipping a feed that protects nobody.
+          node - "$metadata" <<'NODE'
+          const fs = require('fs');
+          const yaml = require('./source/desktop/node_modules/js-yaml');
+          const file = process.argv[2];
+          const macos = String(process.env.MIN_MACOS || '').trim();
+          const DARWIN = {
+            '10.13': 17, '10.14': 18, '10.15': 19,
+            '11': 20, '12': 21, '13': 22, '14': 23, '15': 24, '26': 25,
+          };
+          const [major, minor] = macos.split('.');
+          const key = major === '10' ? `10.${minor}` : major;
+          const darwin = DARWIN[key];
+          if (!darwin) throw new Error(`no Darwin version known for macOS ${macos}; add it before publishing`);
+          const doc = yaml.load(fs.readFileSync(file, 'utf8'));
+          doc.minimumSystemVersion = `${darwin}.0.0`;
+          fs.writeFileSync(file, yaml.dump(doc, { lineWidth: -1 }));
+          console.log(`macOS ${macos} -> feed minimumSystemVersion ${doc.minimumSystemVersion}`);
+          NODE
+          gh release upload "${RELEASE_TAG}" \
             "${{ steps.artifact.outputs.dmg }}" \
             "${{ steps.artifact.outputs.checksum }}" \
             "$metadata" \
@@ -144,7 +193,7 @@ jobs:
           # process.arch, so an Intel Mac can never receive an arm64 DMG (or the
           # reverse). The first job simply leaves its architecture file behind;
           # whichever job sees both completes the channel atomically.
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "${RELEASE_TAG}" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern latest-mac-arm64.yml \
             --pattern latest-mac-x64.yml \
@@ -157,10 +206,24 @@ jobs:
           const arm = yaml.load(fs.readFileSync('combined-metadata/latest-mac-arm64.yml', 'utf8'));
           const x64 = yaml.load(fs.readFileSync('combined-metadata/latest-mac-x64.yml', 'utf8'));
           if (arm.version !== x64.version) throw new Error('Mac metadata versions differ');
-          const combined = { ...arm, files: [...(arm.files || []), ...(x64.files || [])] };
+          if (!arm.minimumSystemVersion || !x64.minimumSystemVersion) {
+            throw new Error('Mac metadata is missing minimumSystemVersion; refusing to publish an unguarded feed');
+          }
+          // The higher of the two floors, compared numerically.
+          const num = (v) => String(v).split('.').map(Number);
+          const higher = (a, b) => {
+            const [x, y] = [num(a), num(b)];
+            for (let i = 0; i < 3; i += 1) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) ? a : b;
+            return a;
+          };
+          const combined = {
+            ...arm,
+            files: [...(arm.files || []), ...(x64.files || [])],
+            minimumSystemVersion: higher(arm.minimumSystemVersion, x64.minimumSystemVersion),
+          };
           fs.writeFileSync('latest-mac.yml', yaml.dump(combined, { lineWidth: -1 }));
           NODE
-            gh release upload "${{ inputs.release_tag }}" latest-mac.yml \
+            gh release upload "${RELEASE_TAG}" latest-mac.yml \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             echo "The other architecture metadata is not available yet; its job will finish the channel."

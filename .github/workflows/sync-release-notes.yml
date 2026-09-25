@@ -39,6 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # Inputs reach run: scripts only through these variables. An expression
+    # spliced into a script is substituted before the shell parses it, so a
+    # value with a quote or $(...) in it would run as code.
+    env:
+      SOURCE_REF: ${{ inputs.source_ref }}
     steps:
       - name: Require the release to already exist
         env:
@@ -52,7 +57,7 @@ jobs:
 
       # Only docs/ is needed, and the source is private: take the least of it.
       - name: Check out the source repository's release notes
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: LinusDaniel77/Silvia-Supra
           ref: ${{ inputs.source_ref }}
@@ -108,7 +113,7 @@ jobs:
           {
             echo "### Synced notes onto \`$TAG\`"
             echo
-            echo "- Source: \`${{ inputs.source_ref }}\`"
+            echo "- Source: \`${SOURCE_REF}\`"
             echo "- Notes: \`docs/RELEASE-NOTES-${{ steps.notes.outputs.version }}.md\`"
             echo "- Verified: the published body matches the file byte for byte."
           } >> "$GITHUB_STEP_SUMMARY"
