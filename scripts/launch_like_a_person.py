@@ -88,9 +88,11 @@ def install():
 
 
 def profile_dir():
+    # Electron names userData after package.json "name" (supra-desktop), not
+    # the product name; the app logs it as "data dir .../supra-desktop/data".
     if IS_WIN:
-        return Path(os.environ["APPDATA"]) / "Supra"
-    return Path.home() / "Library/Application Support/Supra"
+        return Path(os.environ["APPDATA"]) / "supra-desktop"
+    return Path.home() / "Library/Application Support/supra-desktop"
 
 
 def pages():
