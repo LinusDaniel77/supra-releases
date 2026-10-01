@@ -49,6 +49,15 @@ def check(ok, what):
 
 
 def gh_download(name):
+    # A build may still be uploading: wait for the asset rather than fail.
+    for _ in range(80):
+        listed = subprocess.run(["gh", "release", "view", TAG, "-R", "LinusDaniel77/supra-releases",
+                                 "--json", "assets", "-q", ".assets[].name"],
+                                capture_output=True, text=True).stdout.split()
+        if name in listed:
+            break
+        log(f"   waiting for {name} on {TAG}")
+        time.sleep(30)
     subprocess.run(["gh", "release", "download", TAG, "-R", "LinusDaniel77/supra-releases",
                     "-p", name, "-D", str(ROOT), "--clobber"], check=True)
     return ROOT / name
