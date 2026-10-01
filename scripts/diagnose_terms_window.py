@@ -41,10 +41,19 @@ def log(*parts):
 
 
 def dump_jpeg(label, png_or_image, width=900):
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image, ImageStat  # noqa: PLC0415
 
     img = png_or_image if isinstance(png_or_image, Image.Image) else Image.open(io.BytesIO(png_or_image))
     img = img.convert("RGB")
+    # Numbers first: a blank page is one flat colour, a rendered one is not.
+    small = img.resize((max(1, img.width // 4), max(1, img.height // 4)))
+    stat = ImageStat.Stat(small)
+    colours = len(set(small.getdata()))
+    bright = sum(1 for p in small.getdata() if sum(p) > 300) / max(1, small.width * small.height)
+    log(f"[image {label}] size={img.width}x{img.height} mean={[round(m) for m in stat.mean]}"
+        f" stddev={[round(s) for s in stat.stddev]} distinct_colours={colours} bright_fraction={bright:.4f}")
+    if os.environ.get("DIAG_IMAGES") != "1":
+        return
     if img.width > width:
         img = img.resize((width, int(img.height * width / img.width)))
     buf = io.BytesIO()
