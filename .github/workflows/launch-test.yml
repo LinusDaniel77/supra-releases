@@ -45,5 +45,5 @@ jobs:
       - name: Install the published app and launch it like a person
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag || 'v0.11.35' }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'v0.11.36' }}
         run: python scripts/launch_like_a_person.py
