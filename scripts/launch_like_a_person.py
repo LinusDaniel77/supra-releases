@@ -30,7 +30,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-TAG = os.environ.get("RELEASE_TAG", "v0.11.33")
+TAG = os.environ.get("RELEASE_TAG", "v0.11.35")
 ROOT = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "launch-test"
 PORT = 9223
 IS_WIN = os.name == "nt"
