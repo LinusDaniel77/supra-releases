@@ -1,0 +1,67 @@
+name: Problem with Supra
+description: Something went wrong in the app, or a build came out wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please never paste an API key, a password or anyone else's personal data here.
+        Security problems go privately instead: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Supra version
+      description: Switch to Studio and read the bottom-right corner of the window, or on a Mac choose Supra, then About Supra.
+      placeholder: "0.11.38"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS, Apple silicon
+        - macOS, Intel
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.4, or Windows 11 24H2"
+  - type: input
+    id: model
+    attributes:
+      label: Model you selected
+      description: The model shown in the model picker beside the chat box when this happened.
+      placeholder: "Opus 5.5"
+    validations:
+      required: true
+  - type: textarea
+    id: asked
+    attributes:
+      label: What you asked for
+      description: The prompt, or what you were doing in the app.
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead. Error messages help.
+    validations:
+      required: true
+  - type: textarea
+    id: ledger
+    attributes:
+      label: The build's ledger
+      description: |
+        Attach a screenshot of the build's Checks tab. If the build was delivered, you can attach the full ledger instead: in Studio, click the Exports tab at the bottom, then Release package, then Build release. This writes manifest.json into Supra's data folder under artifacts/releases.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log, if Supra crashed or hung
+      description: |
+        Attach backend.log. In Settings, under Data, click Open folder next to Data folder; the log is in the logs folder one level up from the folder that opens. Check it for anything private before you attach it.

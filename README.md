@@ -1,77 +1,98 @@
-# Supra by Silvia AI — public beta releases
+# Supra by Silvia: public beta releases
 
-Release artifacts for [Supra](https://supra.silviaai.dev), the local-first AI
-mechanical engineer.
+Supra is a free desktop app for Windows and Mac that turns a plain-English description of a part into parametric CAD. It asks only what it cannot build without, looks up or assumes the rest and lists every assumption, writes CadQuery code, runs it, checks the result, and hands you a STEP file and an STL along with a ledger. The ledger says what Supra measured, what it assumed, and what it could not check.
 
-## Separate Blender-native preview
+This repository holds the installers and the workflows that build them. The app's source code is private.
 
-[Supra 0.10.0-alpha.3](https://github.com/LinusDaniel77/supra-releases/releases/tag/v0.10.0-alpha.3)
-is a self-contained Windows x64 portable preview. Extract the entire portable ZIP
-and open **Supra.exe**. No separate Blender installation or Supra account is needed:
-the unmodified Blender 5.1.2 runtime is bundled privately.
+## Before you try it
 
-It includes focused native workspaces, part/project metadata, inspection snapshots
-and live bevel, pattern, mirror and mesh Boolean controls. This is **not** an
-installer or the full AI CAD product: native exact B-rep/STEP edits and mechanical
-mates remain absent. An optional local connection to a separately running Supra
-backend supports reviewed AI plans, Astra/Fable selection, job/evidence inspection
-and derived STL previews. Backend/provider setup is not bundled, and AI requests
-may incur provider charges. Held designs are never approved by importing a preview.
-The native prerelease is excluded from the stable desktop updater.
+- **It often does not deliver a part yet.** The last time we measured it, **0 of 8** builds delivered a usable part. Several blockers have been fixed since, but that rate has not been measured again. Expect failures, and read the ledger before you trust a result.
+- **You need a free Supra account, and you must be 18 or older.** On first launch Supra asks you to sign in or create an account inside the app (email, password, date of birth, and a code we email you). Your designs still stay on your computer.
+- **You bring your own model key and pay the provider.** Supra uses your own OpenAI or Anthropic API key; either one is enough. You pay that provider directly for every build and every chat turn.
+- **It runs AI-written code on your computer.** Supra screens the generated code against an allow-list and runs it in a separate process, but that process is not a security sandbox. Use it on a computer where that is acceptable to you.
+- **The checks are screens, not simulation.** Supra's load, heat, printability and fit checks are first-order screens with stated limits. They are not FEA or CFD. A qualified person must review anything that matters before it is made or used.
+- **The installers are not signed.** Windows and macOS will warn you on first launch. The steps below get you past both, and the Windows note says when they cannot.
 
-The release includes the complete new Supra integration/launcher source, matching
-Blender core and library-source archives, build instructions, preserved licenses,
-checksums and a verification manifest. Packaged runtime checks and 23 client/packaging
-tests pass; the manifest lists individual checks and the source revision.
-It is unsigned; native visual verification and clean-machine testing are incomplete.
-Read the limitations and download assets on the native preview release page above.
+## Download
 
-## Stable downloads
+The latest release, straight from GitHub (no account needed to download):
 
-These recovery beta installers and updater assets remain publicly accessible.
-The website's account and download service is managed separately in
-`supra-landing`; this release repository is not proof that account onboarding,
-licensing, or protected website downloads are production-ready.
+| Platform | File |
+|---|---|
+| Windows 10 or 11, x64 | [Supra-Setup.exe](https://github.com/LinusDaniel77/supra-releases/releases/latest/download/Supra-Setup.exe) |
+| Mac with Apple silicon, macOS 12 or later | [Supra-Setup-Mac-arm64.dmg](https://github.com/LinusDaniel77/supra-releases/releases/latest/download/Supra-Setup-Mac-arm64.dmg) |
+| Mac with Intel, macOS 12 or later | [Supra-Setup-Mac-x64.dmg](https://github.com/LinusDaniel77/supra-releases/releases/latest/download/Supra-Setup-Mac-x64.dmg) |
 
-Supra's CAD runtime runs locally and can use the user's own model-provider
-credentials. The application source is developed in a private repository; this
-public repository contains the public release workflows and artifacts.
+Each installer is roughly 300 to 400 MB. The [latest release](https://github.com/LinusDaniel77/supra-releases/releases/latest) page shows the SHA-256 of every file. Each Mac `.dmg` has a `.sha256` file beside it; for Windows, `Supra-Setup-<version>.exe.sha256` covers `Supra-Setup.exe`, which is the same file under a versioned name.
 
-The Windows workflow checks out the private source with a repository-scoped,
-read-only deploy key, assembles and self-tests the runtime, verifies the NSIS
-installer and updater manifest, records a checksum, and publishes the assets.
+## Install
 
-The macOS workflow builds natively for Apple silicon and Intel, self-tests the
-packaged application, verifies the DMG container, and records a checksum. The
-current beta DMGs are not Developer ID signed or Apple-notarized, so macOS may
-require Control-click → Open on first launch.
+### Windows
 
-Windows supports in-app update downloads and restart-to-install. Save your work
-before restarting. The 0.11.5 Mac beta can download and stage its matching official
-DMG, verify its checksum, bundle seal, identity and version, then restart to
-replace a writable installed copy. Copies running from the DMG or a temporary
-location retain the manual download path. Older Mac versions may need a one-time
-manual update. The ad-hoc seal is an integrity check, not an Apple Developer ID
-identity or notarization. Do not disable OS security protections.
+1. Run `Supra-Setup.exe`.
+2. Microsoft Defender SmartScreen shows **Windows protected your PC**. Click **More info**, then **Run anyway**.
+3. Follow the installer, then open Supra from the Start menu.
 
-## Published-installer verification
+If **Smart App Control** is turned on (Windows 11), it blocks unsigned apps and offers no way to allow a single app. Supra cannot be installed on that PC until its installer is signed. Microsoft explains the setting in its [Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
 
-The manual **Verify published installers** workflow downloads existing stable
-release artifacts and checks their GitHub SHA-256 digests before execution. On
-disposable hosted runners it tests fresh Windows installation, Windows installer
-replacement from a specified older version with an actual-profile data marker,
-and native Intel/Apple-silicon DMG installation. Each installed app must cold-start
-its bundled backend twice. Mac bundle seals must remain valid after launch.
+### Mac
 
-The verifier refuses personal machines and self-hosted runners. Reports and smoke
-logs are retained as workflow artifacts for 14 days. It does not rebuild or publish
-installers, require source/signing secrets, or make paid model calls. These checks
-do not prove interactive CAD operation, the updater's restart-button handoff,
-trusted Windows publisher status, Apple notarization, or OS reputation prompts.
+1. Open the `.dmg` you downloaded and drag **Supra** onto the **Applications** folder. Eject the disk image afterwards, and always open Supra from Applications, not from the disk image.
+2. Open Supra from Applications.
+3. **On macOS 15 Sequoia or later:** macOS says it could not verify that Supra is free of malware. Click **Done** (not Move to Trash). Open **System Settings**, then **Privacy & Security**, scroll to **Security**, and click **Open Anyway** on the line about Supra. Confirm with Touch ID or your password, then click **Open Anyway** once more.
+4. **On macOS 12 to 14:** Control-click **Supra** in Applications, choose **Open**, then click **Open** in the dialog.
 
-For 0.11.5, all four jobs passed in the
-[published-installer verification run](https://github.com/LinusDaniel77/supra-releases/actions/runs/35493358687):
-Windows clean install, Windows 0.11.3-to-0.11.5 replacement with profile-data
-preservation, Apple silicon clean install, and Intel Mac clean install. This is
-GitHub-hosted runner evidence, not a claim that end-user OS trust prompts or the
-interactive updater restart flow have been tested. No release bytes were changed.
+macOS remembers your choice for that build. The Mac app carries an ad-hoc integrity seal, not an Apple Developer ID signature or notarization. Do not turn off macOS security protections to run it. The website walks through every click: [Mac first launch](https://supra.silviaai.dev/thanks/mac-arm64).
+
+## First launch
+
+1. Accept the Terms.
+2. Sign in, or create a free account in the app.
+3. In **Settings**, add your OpenAI or Anthropic API key. Supra stores it encrypted with your operating system (DPAPI on Windows, the Keychain on Mac).
+4. Describe a part.
+
+## What a build costs
+
+You pay your model provider for every build. We do not yet have a measured cost per build:
+
+- Our internal development notes put a build at **about $10**. That is an estimate, not a measurement.
+- The one paid build we have kept a record of, a plain 100 mm plate with one hole made on version 0.11.0, was estimated at **$1.49** across three model calls. That version had no engineering concept step, which current builds run by default, so it is not a guide to today's cost.
+
+What pushes the cost up, all on by default: up to 8 billed web searches to research the request, an engineering concept step before the geometry (with an Anthropic model it can run more billed searches, up to 6 per model call), up to three candidate designs on harder parts, and up to three attempts per candidate.
+
+**Supra has no spend cap or low-cost mode in the app yet.** Set a monthly spending limit in your provider's console before you start.
+
+## What leaves your computer
+
+Supra has **no telemetry**: it sends no analytics or usage data to us.
+
+- **Your projects, CAD files, versions and conversations** are stored on your computer.
+- **When you build or chat with Supra AI,** Supra sends your messages, any images you attach, and the engineering context it needs to the model provider you selected. Its web searches also run through that provider and are billed to you. If you entered keys for both providers, a hard build may also be sent to the other one for an independent review.
+- **Your account:** creating an account sends your email, password, date of birth and an optional name to Supra's account service; signing in sends your email and password. The service also keeps your app preferences. The [Privacy Policy](https://supra.silviaai.dev/legal/privacy) covers this.
+- **Update checks:** about 45 seconds after launch, and every 6 hours while it runs, Supra fetches a small update file from this repository's releases. Windows downloads and installs updates in the app, with a restart. On a Mac, a copy in Applications updates itself if your macOS account can write to it; a copy run from the disk image, or one your account cannot replace, must be updated by hand.
+
+## Demo
+
+A short recording of a real build, from prompt to STEP file and ledger with its real cost on screen, is being made. It will be linked here. Until then, judge Supra by the ledger of your own first build.
+
+## Report a problem
+
+[Open an issue](https://github.com/LinusDaniel77/supra-releases/issues/new/choose). Please include:
+
+- the Supra version (switch to Studio and read the bottom-right corner of the window, or on a Mac choose **Supra**, then **About Supra**) and your OS;
+- the model shown in the model picker beside the chat box;
+- what you asked for, and what happened;
+- a screenshot of the build's **Checks** tab, which shows its ledger. If the build was delivered, you can attach the full ledger instead: in Studio, click the **Exports** tab at the bottom, then **Release package**, then **Build release**. This writes `manifest.json` into Supra's data folder under `artifacts/releases`;
+- if Supra crashed or hung, `backend.log`. In **Settings**, under **Data**, click **Open folder** next to **Data folder**; the log is in the `logs` folder one level up from the folder that opens.
+
+Never paste an API key, a password or anyone else's personal data into an issue.
+
+Security problems go privately, not in an issue: see [SECURITY.md](SECURITY.md).
+
+## Other downloads
+
+[Supra 0.10.0-alpha.3](https://github.com/LinusDaniel77/supra-releases/releases/tag/v0.10.0-alpha.3) is an older, separate Blender-based Windows preview. It is not the Supra app above and does not update to it.
+
+## How releases are built
+
+The Windows and Mac workflows in this repository build each installer from the private source, test the packaged app, record a checksum, and publish it. A separate workflow, started by hand, installs a published release on clean Windows and Mac runners and, on Windows, upgrades to it from an earlier version; it has not been run for every release. These checks prove that an installer installs and starts. They do not prove that a build delivers a correct part.
