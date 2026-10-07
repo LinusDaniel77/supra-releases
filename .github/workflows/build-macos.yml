@@ -102,7 +102,14 @@ jobs:
           # Authenticate with this run's short-lived token to avoid the very
           # low anonymous GitHub API rate limit during repeated release tests.
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 scripts/build_desktop_macos.py --installer
+        # The source repository moved its release scripts to scripts/release
+        # (Silvia-Supra #101). Older tags keep them in scripts/, so use
+        # whichever this source_ref has.
+        run: |
+          set -euo pipefail
+          script=scripts/release/build_desktop_macos.py
+          [ -f "$script" ] || script=scripts/build_desktop_macos.py
+          python3 "$script" --installer
 
       - name: Verify installer and record checksum
         id: artifact

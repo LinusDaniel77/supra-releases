@@ -137,7 +137,14 @@ jobs:
       - name: Assemble runtime, selftest, and build the NSIS installer
         working-directory: source
         shell: pwsh
-        run: pwsh -File scripts/build_desktop.ps1 -Installer -Channel release
+        # The source repository moved its release scripts to scripts/release
+        # (Silvia-Supra #101). Older tags keep them in scripts/, so use
+        # whichever this source_ref has.
+        run: |
+          $script = "scripts/release/build_desktop.ps1"
+          if (-not (Test-Path $script)) { $script = "scripts/build_desktop.ps1" }
+          pwsh -File $script -Installer -Channel release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify installer and record checksum
         id: artifact
