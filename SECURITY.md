@@ -74,7 +74,7 @@ exploited**, we have our own legal reporting obligations under Article 14 of the
 EU Cyber Resilience Act, on a 24-hour clock, to ENISA and the relevant national
 CSIRT. Those reports go to regulators, not to the public, and they do not
 shorten your embargo or name you without your consent. Our internal process is
-`docs/CRA-REPORTING-RUNBOOK.md`.
+`docs/runbooks/CRA-REPORTING-RUNBOOK.md`.
 
 ## What we ship, and how to check
 
