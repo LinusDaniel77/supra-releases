@@ -10,10 +10,11 @@ We would rather hear about a problem from you than from an incident.
 Report it privately through GitHub's [private vulnerability reporting](https://github.com/LinusDaniel77/supra-releases/security/advisories/new) on this repository, or email **hello@silviaai.dev** with `SECURITY` in the subject. Please do not open a public issue.
 
 Include what you need to make the issue reproducible: affected version
-(Help → Supra by Silvia, or the installer filename), platform, steps, and
-what an attacker gains. A proof of concept helps. **Do not include third-party
-personal data or live credentials in a report** — describe where a secret is
-exposed rather than pasting it.
+(switch to Studio and read the bottom-right corner of the window, or on a Mac
+choose Supra, then About Supra; the installer filename also has it), platform,
+steps, and what an attacker gains. A proof of concept helps. **Do not include
+third-party personal data or live credentials in a report**; describe where a
+secret is exposed rather than pasting it.
 
 If you believe the issue is being actively exploited, say so in the first line.
 That changes our clock (see below), and we would rather over-react to a false
@@ -55,21 +56,21 @@ updater and its release-artifact verification, credential storage, and
 supra.silviaai.dev.
 
 **Known and documented, so please do not report as new**: the subprocess sandbox
-fallback is not a security boundary — that is stated in `README.md`, and Docker
+fallback is not a security boundary; that is stated in `README.md`, and Docker
 mode is the boundary. Findings about *how* the fallback is selected, or about
 escaping the Docker sandbox itself, are very much in scope.
 
 **Out of scope**: anything requiring an attacker who is already running code as
 your operating-system user (they can read your keys regardless, and the Terms
-say so); model output quality, hallucination or an unsafe design — those are
+say so); model output quality, hallucination or an unsafe design (those are
 safety reports, not vulnerabilities, and go to the same address described as
-such; findings against third-party services.
+such); findings against third-party services.
 
 ## Coordinated disclosure and our reporting duties
 
 We ask for 90 days before public disclosure, and we will usually be faster.
 
-If a vulnerability in Supra — or in a component we ship — is **actively
+If a vulnerability in Supra, or in a component we ship, is **actively
 exploited**, we have our own legal reporting obligations under Article 14 of the
 EU Cyber Resilience Act, on a 24-hour clock, to ENISA and the relevant national
 CSIRT. Those reports go to regulators, not to the public, and they do not
@@ -81,7 +82,7 @@ shorten your embargo or name you without your consent. Our internal process is
 Every release has a software bill of materials at
 `artifacts/sbom/supra-sbom.cdx.json` (CycloneDX), generated from our lockfiles
 plus `legal/bundled-native-components.toml`, which enumerates the native
-libraries bundled inside our wheels — OCCT, GEOS, FFmpeg, OpenSSL and the rest —
+libraries bundled inside our wheels (OCCT, GEOS, FFmpeg, OpenSSL and the rest)
 that no dependency scanner sees. If you find something we ship that is not in
 that file, that is itself a finding worth reporting.
 
