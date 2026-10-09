@@ -3,7 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from verify_installed_release import require_hosted_runner, verify_asset, version, windows_version_matches
+from verify_installed_release import (previous_stable, require_hosted_runner, require_stable, verify_asset,
+                                      version, windows_version_matches)
 
 
 class VerifierContracts(unittest.TestCase):
@@ -40,6 +41,29 @@ class VerifierContracts(unittest.TestCase):
                             {**valid, "digest": ""}, {"size": valid["size"]}):
                 with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                     verify_asset(path, invalid)
+
+    def test_upgrade_starts_from_the_newest_older_stable_release(self):
+        def release(tag, draft=False, pre=False):
+            return {"tagName": tag, "isDraft": draft, "isPrerelease": pre}
+        # GitHub lists by creation date, so an old draft can come first.
+        listing = [release("v0.11.1", draft=True), release("v0.11.52"), release("v0.11.51", pre=True),
+                   release("v0.11.9"), release("v0.11.50"), release("nightly"), release("v0.11.49")]
+        self.assertEqual(previous_stable("v0.11.52", listing), "v0.11.50")
+        self.assertEqual(previous_stable("v0.11.50", listing), "v0.11.49")
+        self.assertEqual(previous_stable("v0.11.10", listing), "v0.11.9")
+        for tag, releases in (("v0.11.9", listing), ("v0.11.52", [release("v0.11.52"), release("v0.11.53")]),
+                              ("v0.11.52", [release("v0.11.51", draft=True)])):
+            with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, f"older than {tag}"):
+                previous_stable(tag, releases)
+
+    def test_refusal_names_the_release_and_why(self):
+        stable = {"tagName": "v0.11.51", "isDraft": False, "isPrerelease": False}
+        require_stable("v0.11.51", stable)
+        for metadata, reason in (({**stable, "isPrerelease": True}, "v0.11.51 is a pre-release"),
+                                 ({**stable, "isDraft": True}, "v0.11.51 is a draft"),
+                                 ({**stable, "tagName": "v0.11.50"}, "GitHub returned v0.11.50")):
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                require_stable("v0.11.51", metadata)
 
 
 if __name__ == "__main__":

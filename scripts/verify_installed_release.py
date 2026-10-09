@@ -24,6 +24,41 @@ def version(tag):
     return tag[1:]
 
 
+def version_key(tag):
+    return tuple(map(int, version(tag).split(".")))
+
+
+def require_stable(tag, metadata):
+    if metadata["tagName"] != tag:
+        raise ValueError(f"Asked for {tag}, but GitHub returned {metadata['tagName']}")
+    if metadata["isDraft"] or metadata["isPrerelease"]:
+        kind = "a draft" if metadata["isDraft"] else "a pre-release"
+        raise ValueError(f"{tag} is {kind}; only published stable releases may be installed")
+
+
+def previous_stable(tag, releases):
+    """The newest published stable release strictly older than tag.
+
+    The upgrade test installs this first and then the new release over it. A
+    pre-release or a draft cannot be installed (require_stable), so it is never
+    chosen, and the listing's order is not trusted: versions are compared.
+    """
+    newest = None
+    for release in releases:
+        name = release.get("tagName", "")
+        if release.get("isDraft") or release.get("isPrerelease"):
+            continue
+        try:
+            key = version_key(name)
+        except ValueError:
+            continue
+        if key < version_key(tag) and (newest is None or key > version_key(newest)):
+            newest = name
+    if newest is None:
+        raise ValueError(f"No published stable release older than {tag} to upgrade from")
+    return newest
+
+
 def windows_version_matches(installed, tag):
     # Windows VERSIONINFO may render the reserved fourth component as .0.
     return installed in (version(tag), version(tag) + ".0")
@@ -76,8 +111,7 @@ def download(tag, name, root, report):
     version(tag)
     metadata = json.loads(run(["gh", "release", "view", tag, "--repo", REPO,
                                "--json", "tagName,isDraft,isPrerelease,assets"]))
-    if metadata["isDraft"] or metadata["isPrerelease"] or metadata["tagName"] != tag:
-        raise ValueError("Only published stable releases may be installed")
+    require_stable(tag, metadata)
     matches = [asset for asset in metadata["assets"] if asset["name"] == name]
     if len(matches) != 1:
         raise ValueError(f"Expected one exact release asset: {name}")
@@ -156,10 +190,13 @@ def main():
     require_hosted_runner(os.environ)
     tag = os.environ["RELEASE_TAG"]
     version(tag)
-    previous = os.environ.get("PREVIOUS_TAG", "")
+    previous = os.environ.get("PREVIOUS_TAG", "").strip()
     upgrade = os.environ.get("TEST_UPGRADE") == "true"
-    if upgrade and (os.name != "nt" or tuple(map(int, version(previous).split("."))) >=
-                    tuple(map(int, version(tag).split(".")))):
+    if upgrade and os.name == "nt" and not previous:
+        previous = previous_stable(tag, json.loads(run(
+            ["gh", "release", "list", "--repo", REPO, "--limit", "1000",
+             "--json", "tagName,isDraft,isPrerelease"])))
+    if upgrade and (os.name != "nt" or version_key(previous) >= version_key(tag)):
         raise ValueError("Upgrade requires Windows and a strictly older stable version")
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
