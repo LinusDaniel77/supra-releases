@@ -6,7 +6,7 @@ This repository holds the installers and the workflows that build them. The app'
 
 ## Before you try it
 
-- **It does not always deliver a part.** In our latest measured run (version 0.11.49, 7 October 2026), Supra with Sonnet 5.5 delivered **6 of 10** test prompts. All six were single parts; all three two-part assemblies, and one motor mount, were held back. Every delivered part had at least one warning in its ledger. Version 0.11.50 fixes the 15 problems that run found, but has not been measured yet. Read the ledger before you trust a result.
+- **It does not always deliver a part.** In our latest measured run (version 0.11.50, 8 and 9 October 2026), Supra with Sonnet 5.5 delivered **7 of 10** test prompts, including all three two-part assemblies. The three held back (a washer, a motor mount and an open-top enclosure) were each held by one check that misread the part. Every delivered part had at least one warning in its ledger. Version 0.11.52 fixes the ten problems that run found, but has not been measured yet. Read the ledger before you trust a result.
 - **You need a free Supra account, and you must be 18 or older.** On first launch Supra asks you to sign in or create an account inside the app (email, password, date of birth, and a code we email you). Your designs still stay on your computer.
 - **You bring your own model key and pay the provider.** Supra uses your own OpenAI or Anthropic API key; either one is enough. You pay that provider directly for every build and every chat turn.
 - **It runs AI-written code on your computer.** Supra screens the generated code against an allow-list and runs it in a separate process, but that process is not a security sandbox. Use it on a computer where that is acceptable to you.
@@ -53,11 +53,12 @@ macOS remembers your choice for that build. The Mac app carries an ad-hoc integr
 
 ## What a build costs
 
-You pay your model provider for every build. Measured on version 0.11.49 (7 October 2026), at each provider's published rates and including web search fees, with keys for both providers set, so each build also paid for an independent review by the other provider:
+You pay your model provider for every build. Measured on version 0.11.50 (8 and 9 October 2026), at each provider's published rates and including web search fees, with keys for both providers set, so each build also paid for an independent review by the other provider:
 
-- **Sonnet 5.5:** $1.76 to $4.00 per prompt across the 10 test prompts, including the four held back, **$2.70 on average**, and $3.45 for a load-bearing bracket.
-- **Opus 5.5:** $3.74 for the same bracket.
-- **Fable 5.1:** $10.28 for the same bracket.
+- **Sonnet 5.5:** $1.05 to $3.61 per prompt across the 10 test prompts, including the three held back, **$2.71 on average**, and $3.00 for a load-bearing bracket.
+- **Opus 5.5:** $3.04 for the same bracket.
+- **GPT 6 Astra:** $8.50 for the same bracket.
+- **Fable 5.1:** $10.28 for the same bracket, measured on version 0.11.49 (7 October 2026); it was not measured on 0.11.50.
 
 These are one run's figures, not a guarantee: a harder part, a longer conversation or a repair round costs more.
 
