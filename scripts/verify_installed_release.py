@@ -112,6 +112,25 @@ def verify_asset(path, asset):
     return actual
 
 
+def check_sidecar(text, name, sha):
+    """The published NAME.sha256: the hash the README tells users to compare,
+    and the file name `shasum -c` looks for in their download folder. A wrong
+    hash fails. A name with a build-runner path in front (every Mac DMG up to
+    v0.11.52) is returned as a warning: the hash comparison still works, only
+    `shasum -c` does not."""
+    fields = text.split()
+    if len(fields) != 2 or not re.fullmatch(r"[a-f0-9]{64}", fields[0]):
+        raise ValueError(f"{name}.sha256 is not one '<sha256>  <file name>' line")
+    published, listed = fields[0], fields[1].removeprefix("*")
+    if published != sha:
+        raise ValueError(f"{name}.sha256 gives {published}, but {name} hashes to {sha}")
+    if listed == name:
+        return None
+    if listed.endswith("/" + name):
+        return f"{name}.sha256 names {listed}, so `shasum -c` in a download folder cannot find the file"
+    raise ValueError(f"{name}.sha256 names {listed}, not {name}")
+
+
 class TimedOut(RuntimeError):
     """A command that was killed at its time limit, with what it printed first."""
 
@@ -185,15 +204,24 @@ def download(tag, name, root, report):
     metadata = json.loads(run(["gh", "release", "view", tag, "--repo", REPO,
                                "--json", "tagName,isDraft,isPrerelease,assets"]))
     require_stable(tag, metadata)
-    matches = [asset for asset in metadata["assets"] if asset["name"] == name]
-    if len(matches) != 1:
-        raise ValueError(f"Expected one exact release asset: {name}")
     directory = root / tag
     directory.mkdir(exist_ok=True)
-    run(["gh", "release", "download", tag, "--repo", REPO, "--pattern", name,
-         "--dir", str(directory)], timeout=600)
-    path = directory / name
-    sha = verify_asset(path, matches[0])
+
+    def fetch(asset_name):
+        matches = [asset for asset in metadata["assets"] if asset["name"] == asset_name]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one exact release asset: {asset_name}")
+        run(["gh", "release", "download", tag, "--repo", REPO, "--pattern", asset_name,
+             "--dir", str(directory)], timeout=600)
+        path = directory / asset_name
+        return path, verify_asset(path, matches[0])
+
+    path, sha = fetch(name)
+    sidecar, _ = fetch(name + ".sha256")
+    warning = check_sidecar(sidecar.read_text(encoding="utf-8"), name, sha)
+    if warning:
+        print(f"::warning::{tag}: {warning}", flush=True)
+        report["warnings"].append(f"{tag}: {warning}")
     report["artifacts"].append({"tag": tag, "name": name, "sha256": sha,
                                 "bytes": path.stat().st_size})
     return path
@@ -290,7 +318,7 @@ def main():
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
     report = {"release": tag, "platform": platform.platform(), "upgrade_from": previous if upgrade else None,
-              "status": "failed", "artifacts": [], "checks": [],
+              "status": "failed", "artifacts": [], "checks": [], "warnings": [],
               "limitations": ["No interactive CAD/UI or updater restart handoff test",
                               "No trusted publisher or clean-device OS reputation proof",
                               "No paid model evaluation"]}
