@@ -1,8 +1,10 @@
 """Install public releases ONLY on disposable GitHub-hosted Windows/Mac runners.
 
 No source checkout, signing secrets, provider credentials or application rebuild.
-This checks installed backend startup and Windows installer replacement, NOT
-interactive UI behavior, Gatekeeper/SmartScreen approval, or updater UI handoff.
+This checks installed backend startup, and that upgrading (the Windows installer
+over the old one, or the new Mac app bundle over the old one) keeps the user's
+data, NOT interactive UI behavior, Gatekeeper/SmartScreen approval, or updater
+UI handoff.
 """
 import hashlib
 import json
@@ -11,6 +13,7 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -59,6 +62,31 @@ def previous_stable(tag, releases):
     return newest
 
 
+def require_upgrade_platform(system, previous, tag):
+    if system not in ("Windows", "Darwin"):
+        raise ValueError("Upgrades are tested on Windows and macOS only")
+    if version_key(previous) >= version_key(tag):
+        raise ValueError(f"An upgrade to {tag} needs a strictly older stable version, not {previous}")
+
+
+def user_data_root():
+    """Where the operating system keeps each user's application data."""
+    if os.name == "nt":
+        return Path(os.environ["APPDATA"])
+    return Path.home() / "Library" / "Application Support"
+
+
+def reported_data_dir(output, user_data):
+    """The data directory a launch reports, which must lie under user_data."""
+    match = re.search(r"^\[supra\] data dir: (.+)$", output, re.MULTILINE)
+    if not match:
+        raise RuntimeError("The launch did not report its data directory")
+    data = Path(match[1].strip()).resolve()
+    if not data.is_relative_to(Path(user_data).resolve()):
+        raise RuntimeError(f"Unexpected application data directory: {data}")
+    return data
+
+
 def windows_version_matches(installed, tag):
     # Windows VERSIONINFO may render the reserved fourth component as .0.
     return installed in (version(tag), version(tag) + ".0")
@@ -84,6 +112,49 @@ def verify_asset(path, asset):
     return actual
 
 
+class TimedOut(RuntimeError):
+    """A command that was killed at its time limit, with what it printed first."""
+
+    def __init__(self, name, timeout, output):
+        super().__init__(f"{name} timed out after {timeout} s; its last output:\n{output[-4000:]}")
+        self.output = output
+
+
+def where_it_is_stuck(pid):
+    """On a Mac, what a hung process is doing, taken before it is killed.
+
+    A three-second stack sample of the process, and whether SecurityAgent, the
+    process that draws the system's password and keychain prompts, is running:
+    a prompt nobody can answer on a runner hangs a launch without a word.
+    """
+    if platform.system() != "Darwin":
+        return ""
+    notes = []
+    for label, command in (("SecurityAgent", ["pgrep", "-lx", "SecurityAgent"]),
+                           ("stack sample", ["sample", str(pid), "3"])):
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            # The main thread's stack comes first in a sample, so keep the start.
+            notes.append(f"--- {label} (exit {done.returncode}) ---\n{done.stdout[:12000]}{done.stderr[:1000]}")
+        except (OSError, subprocess.TimeoutExpired) as error:
+            notes.append(f"--- {label}: {error} ---")
+    found = "\n" + "\n".join(notes)
+    print(f"A launch hung; what it was doing:{found}", flush=True)
+    return found
+
+
+def keychain_prompt(diagnostics):
+    """Whether a hung Mac launch was waiting on a keychain prompt.
+
+    SecurityAgent was running and the stack was inside a keychain read. That is
+    what Electron's safeStorage does when the "Supra Safe Storage" item was made
+    by an app with a different signature: every ad-hoc signed release has a new
+    one, so macOS asks the user again after each update.
+    """
+    agent = re.search(r"^--- SecurityAgent \(exit 0\) ---\n\d+ SecurityAgent", diagnostics, re.MULTILINE)
+    return bool(agent) and ("SecItemCopyMatching" in diagnostics or "SecKeychain" in diagnostics)
+
+
 def run(args, timeout=300, env=None):
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                else {"start_new_session": True})
@@ -92,14 +163,16 @@ def run(args, timeout=300, env=None):
         try:
             output, _ = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
+            stuck = where_it_is_stuck(process.pid)
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                                timeout=30, check=False, **options)
             else:
                 os.killpg(process.pid, signal.SIGKILL)
             process.kill()
-            process.communicate(timeout=30)
-            raise
+            output, _ = process.communicate(timeout=30)
+            name = Path(args[0]).name if isinstance(args, list) else "installer"
+            raise TimedOut(name, timeout, (output or b"").decode("utf-8", errors="replace") + stuck) from None
         text = output.decode("utf-8", errors="replace")
         if process.returncode:
             raise RuntimeError(f"{Path(args[0]).name if isinstance(args, list) else 'installer'} "
@@ -132,7 +205,18 @@ def smoke(executable, label, evidence, report):
     for key in list(env):
         if key.endswith("API_KEY") or key in ("GH_TOKEN", "GITHUB_TOKEN", "ELECTRON_RUN_AS_NODE"):
             env.pop(key)
-    output = run([str(executable), "--smoke"], timeout=300, env=env)
+    try:
+        output = run([str(executable), "--smoke"], timeout=300, env=env)
+    except TimedOut as error:
+        # Keep what a hung launch printed: it is the only record of where it stopped.
+        (evidence / f"{label}.log").write_text(error.output, encoding="utf-8")
+        if keychain_prompt(error.output):
+            raise RuntimeError(
+                f"{label}: macOS asked for permission to read Supra's keychain item and nobody can "
+                "answer on a runner. The item was made by the previous release, and an ad-hoc "
+                "signature changes with every build, so a user sees this prompt after every update "
+                "and the app waits on it.") from error
+        raise
     (evidence / f"{label}.log").write_text(output, encoding="utf-8")
     if "SMOKE OK: backend=bundled" not in output:
         raise RuntimeError(f"{label}: successful process exit without bundled-backend proof")
@@ -165,7 +249,11 @@ def install_mac(tag, root, evidence, report):
     run(["hdiutil", "verify", str(dmg)])
     mount = root / "mounted"
     app = root / "installed" / "Supra.app"
-    app.parent.mkdir()
+    app.parent.mkdir(exist_ok=True)
+    if app.exists():
+        # An upgrade: replace the app the way dragging the new one into
+        # Applications does. The user's data lives outside the bundle.
+        shutil.rmtree(app)
     run(["hdiutil", "attach", str(dmg), "-readonly", "-nobrowse", "-mountpoint", str(mount)])
     try:
         run(["ditto", str(mount / "Supra.app"), str(app)])
@@ -181,9 +269,10 @@ def install_mac(tag, root, evidence, report):
         raise RuntimeError(f"Expected native executable, got {binary}")
     for launch in range(2):
         run(["codesign", "--verify", "--deep", "--strict", str(app)])
-        smoke(executable, f"{tag}-installed-start-{launch + 1}", evidence, report)
+        output = smoke(executable, f"{tag}-installed-start-{launch + 1}", evidence, report)
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
     report["checks"].append("bundle-seal-preserved-after-two-installed-launches")
+    return executable, output
 
 
 def main():
@@ -192,12 +281,12 @@ def main():
     version(tag)
     previous = os.environ.get("PREVIOUS_TAG", "").strip()
     upgrade = os.environ.get("TEST_UPGRADE") == "true"
-    if upgrade and os.name == "nt" and not previous:
+    if upgrade and not previous:
         previous = previous_stable(tag, json.loads(run(
             ["gh", "release", "list", "--repo", REPO, "--limit", "1000",
              "--json", "tagName,isDraft,isPrerelease"])))
-    if upgrade and (os.name != "nt" or version_key(previous) >= version_key(tag)):
-        raise ValueError("Upgrade requires Windows and a strictly older stable version")
+    if upgrade:
+        require_upgrade_platform(platform.system(), previous, tag)
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
     report = {"release": tag, "platform": platform.platform(), "upgrade_from": previous if upgrade else None,
@@ -208,28 +297,32 @@ def main():
     try:
         root = Path(tempfile.mkdtemp(prefix="supra-install-", dir=os.environ["RUNNER_TEMP"]))
         if os.name == "nt":
-            if upgrade:
-                _, output = install_windows(previous, root, evidence, report)
-                match = re.search(r"^\[supra\] data dir: (.+)$", output, re.MULTILINE)
-                if not match:
-                    raise RuntimeError("Baseline smoke did not identify its actual data directory")
-                data = Path(match[1].strip()).resolve()
-                if not data.is_relative_to(Path(os.environ["APPDATA"]).resolve()) or not data.is_dir():
-                    raise RuntimeError("Unexpected baseline application data directory")
-                marker = data / "ci-preservation-marker.txt"
-                marker.write_text("preserve-existing-project-data", encoding="utf-8")
-            executable, output = install_windows(tag, root, evidence, report)
-            if upgrade:
-                if f"[supra] data dir: {data}" not in output:
-                    raise RuntimeError("New installation silently switched its data directory")
-                if marker.read_text(encoding="utf-8") != "preserve-existing-project-data":
-                    raise RuntimeError("Installer replacement did not preserve the profile marker")
-                report["checks"].append("profile-marker-preserved-across-installer-upgrade")
-            smoke(executable, f"{tag}-second-installed-start", evidence, report)
+            install = install_windows
         elif platform.system() == "Darwin":
-            install_mac(tag, root, evidence, report)
+            install = install_mac
         else:
             raise RuntimeError("Unsupported installation-test platform")
+        if upgrade:
+            # Install the older release, let it create its data directory, and
+            # leave a marker there. Installing the new release over it must
+            # keep the same directory and the marker: on Windows the NSIS
+            # installer replaces the program, on a Mac the new app bundle
+            # replaces the old one.
+            _, output = install(previous, root, evidence, report)
+            data = reported_data_dir(output, user_data_root())
+            if not data.is_dir():
+                raise RuntimeError(f"Baseline data directory does not exist: {data}")
+            marker = data / "ci-preservation-marker.txt"
+            marker.write_text("preserve-existing-project-data", encoding="utf-8")
+        executable, output = install(tag, root, evidence, report)
+        if upgrade:
+            if reported_data_dir(output, user_data_root()) != data:
+                raise RuntimeError("New installation silently switched its data directory")
+            if marker.read_text(encoding="utf-8") != "preserve-existing-project-data":
+                raise RuntimeError("Replacing the installation did not preserve the profile marker")
+            report["checks"].append("profile-marker-preserved-across-upgrade")
+        if os.name == "nt":
+            smoke(executable, f"{tag}-second-installed-start", evidence, report)
         report["status"] = "passed"
     except Exception as error:
         report["error"] = str(error)
