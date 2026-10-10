@@ -17,9 +17,8 @@ on:
         default: main
         type: string
       release_tag:
-        description: Version tag (must match desktop/package.json)
+        description: Version tag, e.g. v0.11.52 (must match desktop/package.json at source_ref)
         required: true
-        default: v0.9.1
         type: string
       publish:
         description: Publish the verified beta DMG to the public GitHub release
