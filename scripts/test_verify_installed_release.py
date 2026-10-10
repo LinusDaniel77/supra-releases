@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from verify_installed_release import (previous_stable, require_hosted_runner, require_stable, verify_asset,
-                                      version, windows_version_matches)
+from verify_installed_release import (previous_stable, reported_data_dir, require_hosted_runner, require_stable,
+                                      require_upgrade_platform, verify_asset, version, windows_version_matches)
 
 
 class VerifierContracts(unittest.TestCase):
@@ -64,6 +64,25 @@ class VerifierContracts(unittest.TestCase):
                                  ({**stable, "tagName": "v0.11.50"}, "GitHub returned v0.11.50")):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
                 require_stable("v0.11.51", metadata)
+
+    def test_upgrades_run_on_windows_and_mac_from_an_older_release(self):
+        for system in ("Windows", "Darwin"):
+            require_upgrade_platform(system, "v0.11.51", "v0.11.52")
+        with self.assertRaisesRegex(ValueError, "Windows and macOS only"):
+            require_upgrade_platform("Linux", "v0.11.51", "v0.11.52")
+        for previous in ("v0.11.52", "v0.11.53", "v0.12.0"):
+            with self.subTest(previous=previous), self.assertRaisesRegex(ValueError, "strictly older"):
+                require_upgrade_platform("Darwin", previous, "v0.11.52")
+
+    def test_the_data_directory_comes_from_the_launch_and_stays_in_user_data(self):
+        with tempfile.TemporaryDirectory() as home:
+            data = Path(home) / "Supra" / "data"
+            output = f"[supra] backend: BUNDLED runtime at /x\n[supra] data dir: {data}\nSMOKE OK: backend=bundled\n"
+            self.assertEqual(reported_data_dir(output, home), data.resolve())
+            with self.assertRaisesRegex(RuntimeError, "did not report"):
+                reported_data_dir("SMOKE OK: backend=bundled\n", home)
+            with tempfile.TemporaryDirectory() as elsewhere, self.assertRaisesRegex(RuntimeError, "Unexpected"):
+                reported_data_dir(f"[supra] data dir: {Path(elsewhere) / 'data'}\n", home)
 
 
 if __name__ == "__main__":

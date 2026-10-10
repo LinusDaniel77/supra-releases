@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       previous_tag:
-        description: Published stable Windows release to upgrade from (empty picks the newest stable release older than release_tag)
+        description: Published stable release the upgrade jobs start from (empty picks the newest stable release older than release_tag)
         type: string
         required: false
         default: ''
@@ -37,6 +37,9 @@ jobs:
           - name: mac-arm64-clean
             runner: macos-15
             upgrade: 'false'
+          - name: mac-arm64-upgrade
+            runner: macos-15
+            upgrade: 'true'
           - name: mac-x64-clean
             runner: macos-15-intel
             upgrade: 'false'

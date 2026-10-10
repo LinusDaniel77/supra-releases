@@ -99,4 +99,4 @@ Security problems go privately, not in an issue: see [SECURITY.md](SECURITY.md).
 
 ## How releases are built
 
-The Windows and Mac workflows in this repository build each installer from the private source, test the packaged app, record a checksum, and publish it. A separate workflow, started by hand, installs a published release on clean Windows and Mac runners and, on Windows, upgrades to it from an earlier version; it has not been run for every release. These checks prove that an installer installs and starts. They do not prove that a build delivers a correct part.
+The Windows and Mac workflows in this repository build each installer from the private source, test the packaged app, record a checksum, and publish it. A separate workflow, started by hand, installs a published release on clean Windows and Mac runners and, on Windows and Apple silicon Macs, upgrades to it from the previous stable release, checking that the user's data survives; it has not been run for every release. These checks prove that an installer installs and starts. They do not prove that a build delivers a correct part.

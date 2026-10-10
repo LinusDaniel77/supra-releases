@@ -1,8 +1,10 @@
 """Install public releases ONLY on disposable GitHub-hosted Windows/Mac runners.
 
 No source checkout, signing secrets, provider credentials or application rebuild.
-This checks installed backend startup and Windows installer replacement, NOT
-interactive UI behavior, Gatekeeper/SmartScreen approval, or updater UI handoff.
+This checks installed backend startup, and that upgrading (the Windows installer
+over the old one, or the new Mac app bundle over the old one) keeps the user's
+data, NOT interactive UI behavior, Gatekeeper/SmartScreen approval, or updater
+UI handoff.
 """
 import hashlib
 import json
@@ -11,6 +13,7 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -57,6 +60,31 @@ def previous_stable(tag, releases):
     if newest is None:
         raise ValueError(f"No published stable release older than {tag} to upgrade from")
     return newest
+
+
+def require_upgrade_platform(system, previous, tag):
+    if system not in ("Windows", "Darwin"):
+        raise ValueError("Upgrades are tested on Windows and macOS only")
+    if version_key(previous) >= version_key(tag):
+        raise ValueError(f"An upgrade to {tag} needs a strictly older stable version, not {previous}")
+
+
+def user_data_root():
+    """Where the operating system keeps each user's application data."""
+    if os.name == "nt":
+        return Path(os.environ["APPDATA"])
+    return Path.home() / "Library" / "Application Support"
+
+
+def reported_data_dir(output, user_data):
+    """The data directory a launch reports, which must lie under user_data."""
+    match = re.search(r"^\[supra\] data dir: (.+)$", output, re.MULTILINE)
+    if not match:
+        raise RuntimeError("The launch did not report its data directory")
+    data = Path(match[1].strip()).resolve()
+    if not data.is_relative_to(Path(user_data).resolve()):
+        raise RuntimeError(f"Unexpected application data directory: {data}")
+    return data
 
 
 def windows_version_matches(installed, tag):
@@ -165,7 +193,11 @@ def install_mac(tag, root, evidence, report):
     run(["hdiutil", "verify", str(dmg)])
     mount = root / "mounted"
     app = root / "installed" / "Supra.app"
-    app.parent.mkdir()
+    app.parent.mkdir(exist_ok=True)
+    if app.exists():
+        # An upgrade: replace the app the way dragging the new one into
+        # Applications does. The user's data lives outside the bundle.
+        shutil.rmtree(app)
     run(["hdiutil", "attach", str(dmg), "-readonly", "-nobrowse", "-mountpoint", str(mount)])
     try:
         run(["ditto", str(mount / "Supra.app"), str(app)])
@@ -181,9 +213,10 @@ def install_mac(tag, root, evidence, report):
         raise RuntimeError(f"Expected native executable, got {binary}")
     for launch in range(2):
         run(["codesign", "--verify", "--deep", "--strict", str(app)])
-        smoke(executable, f"{tag}-installed-start-{launch + 1}", evidence, report)
+        output = smoke(executable, f"{tag}-installed-start-{launch + 1}", evidence, report)
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
     report["checks"].append("bundle-seal-preserved-after-two-installed-launches")
+    return executable, output
 
 
 def main():
@@ -192,12 +225,12 @@ def main():
     version(tag)
     previous = os.environ.get("PREVIOUS_TAG", "").strip()
     upgrade = os.environ.get("TEST_UPGRADE") == "true"
-    if upgrade and os.name == "nt" and not previous:
+    if upgrade and not previous:
         previous = previous_stable(tag, json.loads(run(
             ["gh", "release", "list", "--repo", REPO, "--limit", "1000",
              "--json", "tagName,isDraft,isPrerelease"])))
-    if upgrade and (os.name != "nt" or version_key(previous) >= version_key(tag)):
-        raise ValueError("Upgrade requires Windows and a strictly older stable version")
+    if upgrade:
+        require_upgrade_platform(platform.system(), previous, tag)
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
     report = {"release": tag, "platform": platform.platform(), "upgrade_from": previous if upgrade else None,
@@ -208,28 +241,32 @@ def main():
     try:
         root = Path(tempfile.mkdtemp(prefix="supra-install-", dir=os.environ["RUNNER_TEMP"]))
         if os.name == "nt":
-            if upgrade:
-                _, output = install_windows(previous, root, evidence, report)
-                match = re.search(r"^\[supra\] data dir: (.+)$", output, re.MULTILINE)
-                if not match:
-                    raise RuntimeError("Baseline smoke did not identify its actual data directory")
-                data = Path(match[1].strip()).resolve()
-                if not data.is_relative_to(Path(os.environ["APPDATA"]).resolve()) or not data.is_dir():
-                    raise RuntimeError("Unexpected baseline application data directory")
-                marker = data / "ci-preservation-marker.txt"
-                marker.write_text("preserve-existing-project-data", encoding="utf-8")
-            executable, output = install_windows(tag, root, evidence, report)
-            if upgrade:
-                if f"[supra] data dir: {data}" not in output:
-                    raise RuntimeError("New installation silently switched its data directory")
-                if marker.read_text(encoding="utf-8") != "preserve-existing-project-data":
-                    raise RuntimeError("Installer replacement did not preserve the profile marker")
-                report["checks"].append("profile-marker-preserved-across-installer-upgrade")
-            smoke(executable, f"{tag}-second-installed-start", evidence, report)
+            install = install_windows
         elif platform.system() == "Darwin":
-            install_mac(tag, root, evidence, report)
+            install = install_mac
         else:
             raise RuntimeError("Unsupported installation-test platform")
+        if upgrade:
+            # Install the older release, let it create its data directory, and
+            # leave a marker there. Installing the new release over it must
+            # keep the same directory and the marker: on Windows the NSIS
+            # installer replaces the program, on a Mac the new app bundle
+            # replaces the old one.
+            _, output = install(previous, root, evidence, report)
+            data = reported_data_dir(output, user_data_root())
+            if not data.is_dir():
+                raise RuntimeError(f"Baseline data directory does not exist: {data}")
+            marker = data / "ci-preservation-marker.txt"
+            marker.write_text("preserve-existing-project-data", encoding="utf-8")
+        executable, output = install(tag, root, evidence, report)
+        if upgrade:
+            if reported_data_dir(output, user_data_root()) != data:
+                raise RuntimeError("New installation silently switched its data directory")
+            if marker.read_text(encoding="utf-8") != "preserve-existing-project-data":
+                raise RuntimeError("Replacing the installation did not preserve the profile marker")
+            report["checks"].append("profile-marker-preserved-across-upgrade")
+        if os.name == "nt":
+            smoke(executable, f"{tag}-second-installed-start", evidence, report)
         report["status"] = "passed"
     except Exception as error:
         report["error"] = str(error)
