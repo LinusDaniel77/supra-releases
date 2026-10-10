@@ -10,8 +10,10 @@ name: Sync release notes
 # sat in the source repo, already written, already reviewed.
 #
 # So this does not take the notes as an input. It reads them from the source
-# repo at docs/RELEASE-NOTES-<version>.md, which makes that file the single
-# place release notes exist. Pasting is what drifts.
+# repo at docs/releases/<version>.md, which makes that file the single place
+# release notes exist. Pasting is what drifts. (Until 6 October 2026 the file
+# was docs/RELEASE-NOTES-<version>.md; a source_ref from before then still has
+# it there, so that path is the fallback.)
 
 on:
   workflow_dispatch:
@@ -75,9 +77,13 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          path="source/docs/RELEASE-NOTES-$version.md"
-          test -s "$path" || {
-            echo "::error::$path is missing or empty. The notes live in the source repo."
+          path=""
+          for candidate in "source/docs/releases/$version.md" \
+                           "source/docs/RELEASE-NOTES-$version.md"; do
+            if [ -s "$candidate" ]; then path="$candidate"; break; fi
+          done
+          test -n "$path" || {
+            echo "::error::No notes for $version at docs/releases/$version.md (or, before 6 October 2026, docs/RELEASE-NOTES-$version.md) in the source repo."
             exit 1
           }
           echo "path=$path" >> "$GITHUB_OUTPUT"
@@ -114,6 +120,6 @@ jobs:
             echo "### Synced notes onto \`$TAG\`"
             echo
             echo "- Source: \`${SOURCE_REF}\`"
-            echo "- Notes: \`docs/RELEASE-NOTES-${{ steps.notes.outputs.version }}.md\`"
+            echo "- Notes: \`${NOTES#source/}\`"
             echo "- Verified: the published body matches the file byte for byte."
           } >> "$GITHUB_STEP_SUMMARY"
