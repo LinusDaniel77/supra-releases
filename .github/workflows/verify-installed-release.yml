@@ -37,13 +37,20 @@ jobs:
           - name: mac-arm64-clean
             runner: macos-15
             upgrade: 'false'
+          # Known to fail until the Mac app is signed with a stable identity:
+          # each ad-hoc signed release has a new signature, so macOS asks for
+          # permission to read the keychain item the previous release made,
+          # and nobody can answer on a runner. Users see that prompt after
+          # every update. The job still runs and still shows red.
           - name: mac-arm64-upgrade
             runner: macos-15
             upgrade: 'true'
+            known_failure: 'true'
           - name: mac-x64-clean
             runner: macos-15-intel
             upgrade: 'false'
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.known_failure == 'true' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

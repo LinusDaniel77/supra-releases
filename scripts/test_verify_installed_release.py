@@ -4,9 +4,9 @@ import sys
 import tempfile
 import unittest
 
-from verify_installed_release import (TimedOut, previous_stable, reported_data_dir, require_hosted_runner,
-                                      require_stable, require_upgrade_platform, run, verify_asset, version,
-                                      windows_version_matches)
+from verify_installed_release import (TimedOut, keychain_prompt, previous_stable, reported_data_dir,
+                                      require_hosted_runner, require_stable, require_upgrade_platform, run,
+                                      verify_asset, version, windows_version_matches)
 
 
 class VerifierContracts(unittest.TestCase):
@@ -92,6 +92,16 @@ class VerifierContracts(unittest.TestCase):
             run([sys.executable, "-c", script], timeout=2)
         self.assertIn("[supra] data dir: /x", caught.exception.output)
         self.assertIn("timed out after 2 s", str(caught.exception))
+
+    def test_a_launch_waiting_on_a_keychain_prompt_is_named(self):
+        # Shaped like the v0.11.51 to v0.11.52 upgrade run on macos-15.
+        stack = "+ 2315 SecItemCopyMatching  (in Security) + 392\n+ 2315 mach_msg  (in libsystem_kernel.dylib)\n"
+        prompt = "--- SecurityAgent (exit 0) ---\n7695 SecurityAgent\n\n--- stack sample (exit 0) ---\n" + stack
+        self.assertTrue(keychain_prompt(prompt))
+        no_agent = "--- SecurityAgent (exit 1) ---\n\n--- stack sample (exit 0) ---\n" + stack
+        self.assertFalse(keychain_prompt(no_agent))
+        other_hang = "--- SecurityAgent (exit 0) ---\n7695 SecurityAgent\n--- stack sample (exit 0) ---\n+ 9 poll\n"
+        self.assertFalse(keychain_prompt(other_hang))
 
 
 if __name__ == "__main__":

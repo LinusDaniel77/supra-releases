@@ -44,6 +44,8 @@ If **Smart App Control** is turned on (Windows 11), it blocks unsigned apps and 
 
 macOS remembers your choice for that build. The Mac app carries an ad-hoc integrity seal, not an Apple Developer ID signature or notarization. Do not turn off macOS security protections to run it. The website walks through every click: [Mac first launch](https://supra.silviaai.dev/thanks/mac-arm64).
 
+**After an update on a Mac,** macOS asks whether Supra may use the "Supra Safe Storage" item in your keychain, and Supra waits until you answer. Click **Always Allow**: that item is the key Supra encrypts your API key and sign-in with. If you click **Deny**, Supra cannot read them. Because each release has a new ad-hoc signature, the question comes back after every update.
+
 ## First launch
 
 1. Accept the Terms.
@@ -99,4 +101,4 @@ Security problems go privately, not in an issue: see [SECURITY.md](SECURITY.md).
 
 ## How releases are built
 
-The Windows and Mac workflows in this repository build each installer from the private source, test the packaged app, record a checksum, and publish it. A separate workflow, started by hand, installs a published release on clean Windows and Mac runners and, on Windows and Apple silicon Macs, upgrades to it from the previous stable release, checking that the user's data survives; it has not been run for every release. These checks prove that an installer installs and starts. They do not prove that a build delivers a correct part.
+The Windows and Mac workflows in this repository build each installer from the private source, test the packaged app, record a checksum, and publish it. A separate workflow, started by hand, installs a published release on clean Windows and Mac runners and, on Windows, upgrades to it from the previous stable release, checking that the user's data survives. The same upgrade on an Apple silicon Mac stops at the keychain question described under Install, which nobody can answer on a runner. It has not been run for every release. These checks prove that an installer installs and starts. They do not prove that a build delivers a correct part.

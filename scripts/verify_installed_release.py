@@ -143,6 +143,18 @@ def where_it_is_stuck(pid):
     return found
 
 
+def keychain_prompt(diagnostics):
+    """Whether a hung Mac launch was waiting on a keychain prompt.
+
+    SecurityAgent was running and the stack was inside a keychain read. That is
+    what Electron's safeStorage does when the "Supra Safe Storage" item was made
+    by an app with a different signature: every ad-hoc signed release has a new
+    one, so macOS asks the user again after each update.
+    """
+    agent = re.search(r"^--- SecurityAgent \(exit 0\) ---\n\d+ SecurityAgent", diagnostics, re.MULTILINE)
+    return bool(agent) and ("SecItemCopyMatching" in diagnostics or "SecKeychain" in diagnostics)
+
+
 def run(args, timeout=300, env=None):
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                else {"start_new_session": True})
@@ -198,6 +210,12 @@ def smoke(executable, label, evidence, report):
     except TimedOut as error:
         # Keep what a hung launch printed: it is the only record of where it stopped.
         (evidence / f"{label}.log").write_text(error.output, encoding="utf-8")
+        if keychain_prompt(error.output):
+            raise RuntimeError(
+                f"{label}: macOS asked for permission to read Supra's keychain item and nobody can "
+                "answer on a runner. The item was made by the previous release, and an ad-hoc "
+                "signature changes with every build, so a user sees this prompt after every update "
+                "and the app waits on it.") from error
         raise
     (evidence / f"{label}.log").write_text(output, encoding="utf-8")
     if "SMOKE OK: backend=bundled" not in output:
