@@ -120,6 +120,29 @@ class TimedOut(RuntimeError):
         self.output = output
 
 
+def where_it_is_stuck(pid):
+    """On a Mac, what a hung process is doing, taken before it is killed.
+
+    A three-second stack sample of the process, and whether SecurityAgent, the
+    process that draws the system's password and keychain prompts, is running:
+    a prompt nobody can answer on a runner hangs a launch without a word.
+    """
+    if platform.system() != "Darwin":
+        return ""
+    notes = []
+    for label, command in (("SecurityAgent", ["pgrep", "-lx", "SecurityAgent"]),
+                           ("stack sample", ["sample", str(pid), "3"])):
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            # The main thread's stack comes first in a sample, so keep the start.
+            notes.append(f"--- {label} (exit {done.returncode}) ---\n{done.stdout[:12000]}{done.stderr[:1000]}")
+        except (OSError, subprocess.TimeoutExpired) as error:
+            notes.append(f"--- {label}: {error} ---")
+    found = "\n" + "\n".join(notes)
+    print(f"A launch hung; what it was doing:{found}", flush=True)
+    return found
+
+
 def run(args, timeout=300, env=None):
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                else {"start_new_session": True})
@@ -128,6 +151,7 @@ def run(args, timeout=300, env=None):
         try:
             output, _ = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
+            stuck = where_it_is_stuck(process.pid)
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                                timeout=30, check=False, **options)
@@ -136,7 +160,7 @@ def run(args, timeout=300, env=None):
             process.kill()
             output, _ = process.communicate(timeout=30)
             name = Path(args[0]).name if isinstance(args, list) else "installer"
-            raise TimedOut(name, timeout, (output or b"").decode("utf-8", errors="replace")) from None
+            raise TimedOut(name, timeout, (output or b"").decode("utf-8", errors="replace") + stuck) from None
         text = output.decode("utf-8", errors="replace")
         if process.returncode:
             raise RuntimeError(f"{Path(args[0]).name if isinstance(args, list) else 'installer'} "
