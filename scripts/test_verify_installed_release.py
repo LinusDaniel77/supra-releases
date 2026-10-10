@@ -1,13 +1,15 @@
 import hashlib
+import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from verify_installed_release import (TimedOut, keychain_prompt, previous_stable, reported_data_dir,
-                                      require_hosted_runner, require_stable, require_upgrade_platform, run,
-                                      verify_asset, version, windows_version_matches)
+from verify_installed_release import (TimedOut, check_sidecar, download, keychain_prompt, previous_stable,
+                                      reported_data_dir, require_hosted_runner, require_stable,
+                                      require_upgrade_platform, run, verify_asset, version,
+                                      windows_version_matches)
 
 
 class VerifierContracts(unittest.TestCase):
@@ -115,6 +117,54 @@ class VerifierContracts(unittest.TestCase):
                 run([sys.executable, "-c", script], timeout=1, diagnose=True)
             sampled.assert_called_once()
             self.assertIn("--- sampled ---", launch.exception.output)
+
+    def test_the_published_checksum_file_matches_and_names_the_download(self):
+        sha = "ab" * 32
+        dmg = "Supra-Setup-Mac-arm64.dmg"
+        self.assertIsNone(check_sidecar(f"{sha}  Supra-Setup-0.11.52.exe\n", "Supra-Setup-0.11.52.exe", sha))
+        self.assertIsNone(check_sidecar(f"{sha} *{dmg}\r\n", dmg, sha))
+        # Shaped like every Mac .sha256 up to v0.11.52: right hash, runner path in front.
+        warning = check_sidecar(f"{sha}  source/desktop/dist/{dmg}\n", dmg, sha)
+        self.assertIn("shasum -c", warning)
+        for text, reason in ((f"{'cd' * 32}  {dmg}\n", "hashes to"),
+                             (f"{sha}  Supra-Setup-Mac-x64.dmg\n", "not Supra-Setup-Mac-arm64.dmg"),
+                             (f"{sha}  {dmg}\n{sha}  {dmg}\n", "one"), ("", "one"),
+                             (f"{sha.upper()}  {dmg}\n", "one")):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, reason):
+                check_sidecar(text, dmg, sha)
+
+    def test_an_installer_is_only_used_after_its_checksum_file_checks_out(self):
+        name = "Supra-Setup-Mac-arm64.dmg"
+        installer = b"test installer fixture"
+        sha = hashlib.sha256(installer).hexdigest()
+
+        def attempt(sidecar):
+            files = {name: installer}
+            if sidecar is not None:
+                files[name + ".sha256"] = sidecar
+            assets = [{"name": n, "size": len(b), "digest": "sha256:" + hashlib.sha256(b).hexdigest()}
+                      for n, b in files.items()]
+            metadata = {"tagName": "v0.11.52", "isDraft": False, "isPrerelease": False, "assets": assets}
+
+            def gh(args, timeout=300, env=None, diagnose=False):
+                if args[:3] == ["gh", "release", "view"]:
+                    return json.dumps(metadata)
+                pattern = args[args.index("--pattern") + 1]
+                (Path(args[args.index("--dir") + 1]) / pattern).write_bytes(files[pattern])
+                return ""
+
+            report = {"artifacts": [], "warnings": []}
+            with tempfile.TemporaryDirectory() as root, mock.patch("verify_installed_release.run", gh):
+                path = download("v0.11.52", name, Path(root), report)
+                self.assertEqual(path.name, name)
+            return report
+
+        self.assertEqual(attempt(f"{sha}  {name}\n".encode())["warnings"], [])
+        self.assertEqual(len(attempt(f"{sha}  source/desktop/dist/{name}\n".encode())["warnings"]), 1)
+        with self.assertRaisesRegex(ValueError, "hashes to"):
+            attempt(f"{'0' * 64}  {name}\n".encode())
+        with self.assertRaisesRegex(ValueError, "one exact release asset: Supra-Setup-Mac-arm64.dmg.sha256"):
+            attempt(None)
 
 
 if __name__ == "__main__":
