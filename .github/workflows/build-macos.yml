@@ -127,7 +127,12 @@ jobs:
           # an older Mac is never offered an update that will not open there.
           min_macos="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")"
           test -n "$min_macos"
-          shasum -a 256 "$dmg" | tee "$checksum"
+          # Hashed from inside dist so the file names only the DMG: a user who
+          # downloads both into one folder can then run `shasum -c` on it.
+          # Up to v0.11.52 it named source/desktop/dist/..., which no download
+          # folder has, so the check reported the file missing.
+          (cd "$(dirname "$dmg")" && shasum -a 256 "$(basename "$dmg")") | tee "$checksum"
+          (cd "$(dirname "$dmg")" && shasum -a 256 -c "$(basename "$checksum")")
           {
             echo "dmg=$dmg"
             echo "checksum=$checksum"
