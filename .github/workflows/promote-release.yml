@@ -1,7 +1,10 @@
 name: Promote release
 
-# Promotes a public beta after its Windows recovery installer and update
-# metadata have been attached and verified.
+# Promotes a public beta after its installers, checksums and update metadata
+# have been attached and verified, for Windows and for both Macs. Promotion
+# makes this release "latest", which is where the README's download links and
+# every installed copy's update check point, so a missing file would be a
+# broken download or a failed update for everyone on that platform.
 
 on:
   workflow_dispatch:
@@ -36,7 +39,7 @@ jobs:
       PUBLIC_ASSETS_VERIFIED: ${{ inputs.public_assets_verified }}
       TAG: ${{ inputs.tag }}
     steps:
-      - name: Require the public recovery assets
+      - name: Require every platform's installer, checksum and update feed
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -49,9 +52,19 @@ jobs:
           assets="$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" \
                     --json assets --jq '.assets[].name')"
           echo "$assets"
-          grep -Fxq 'Supra-Setup.exe' <<<"$assets"
-          grep -Fxq 'latest.yml' <<<"$assets"
-          grep -Eq '^Supra-Setup-.*\.exe\.sha256$' <<<"$assets"
+          missing=()
+          for name in Supra-Setup.exe latest.yml \
+                      Supra-Setup-Mac-arm64.dmg Supra-Setup-Mac-arm64.dmg.sha256 \
+                      Supra-Setup-Mac-x64.dmg Supra-Setup-Mac-x64.dmg.sha256 \
+                      latest-mac.yml; do
+            grep -Fxq "$name" <<<"$assets" || missing+=("$name")
+          done
+          grep -Eq '^Supra-Setup-.*\.exe\.sha256$' <<<"$assets" \
+            || missing+=("Supra-Setup-<version>.exe.sha256")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::${TAG} is missing: ${missing[*]}. Attach them before promoting."
+            exit 1
+          fi
 
       - name: Clear the prerelease flag
         env:
