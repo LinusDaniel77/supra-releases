@@ -155,7 +155,7 @@ def keychain_prompt(diagnostics):
     return bool(agent) and ("SecItemCopyMatching" in diagnostics or "SecKeychain" in diagnostics)
 
 
-def run(args, timeout=300, env=None):
+def run(args, timeout=300, env=None, diagnose=False):
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                else {"start_new_session": True})
     with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -163,7 +163,7 @@ def run(args, timeout=300, env=None):
         try:
             output, _ = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            stuck = where_it_is_stuck(process.pid)
+            stuck = where_it_is_stuck(process.pid) if diagnose else ""
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                                timeout=30, check=False, **options)
@@ -206,7 +206,7 @@ def smoke(executable, label, evidence, report):
         if key.endswith("API_KEY") or key in ("GH_TOKEN", "GITHUB_TOKEN", "ELECTRON_RUN_AS_NODE"):
             env.pop(key)
     try:
-        output = run([str(executable), "--smoke"], timeout=300, env=env)
+        output = run([str(executable), "--smoke"], timeout=300, env=env, diagnose=True)
     except TimedOut as error:
         # Keep what a hung launch printed: it is the only record of where it stopped.
         (evidence / f"{label}.log").write_text(error.output, encoding="utf-8")
