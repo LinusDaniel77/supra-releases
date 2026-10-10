@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from verify_installed_release import (TimedOut, keychain_prompt, previous_stable, reported_data_dir,
                                       require_hosted_runner, require_stable, require_upgrade_platform, run,
@@ -102,6 +103,18 @@ class VerifierContracts(unittest.TestCase):
         self.assertFalse(keychain_prompt(no_agent))
         other_hang = "--- SecurityAgent (exit 0) ---\n7695 SecurityAgent\n--- stack sample (exit 0) ---\n+ 9 poll\n"
         self.assertFalse(keychain_prompt(other_hang))
+
+    def test_only_app_launches_are_sampled_when_they_hang(self):
+        script = "import time; time.sleep(30)"
+        with mock.patch("verify_installed_release.where_it_is_stuck", return_value="\n--- sampled ---") as sampled:
+            with self.assertRaises(TimedOut) as plain:
+                run([sys.executable, "-c", script], timeout=1)
+            sampled.assert_not_called()
+            self.assertNotIn("sampled", plain.exception.output)
+            with self.assertRaises(TimedOut) as launch:
+                run([sys.executable, "-c", script], timeout=1, diagnose=True)
+            sampled.assert_called_once()
+            self.assertIn("--- sampled ---", launch.exception.output)
 
 
 if __name__ == "__main__":
