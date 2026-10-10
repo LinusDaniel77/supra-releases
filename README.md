@@ -25,6 +25,17 @@ The latest release, straight from GitHub (no account needed to download):
 
 Each installer is roughly 300 to 400 MB. The [latest release](https://github.com/LinusDaniel77/supra-releases/releases/latest) page shows the SHA-256 of every file. Each Mac `.dmg` has a `.sha256` file beside it; for Windows, `Supra-Setup-<version>.exe.sha256` covers `Supra-Setup.exe`, which is the same file under a versioned name.
 
+### Check your download
+
+Download the `.sha256` file too, then run this in the folder that holds both. It prints `True` or `OK` when the installer is exactly the published one.
+
+- **Windows** (PowerShell), with the version you downloaded in place of `0.11.52`:
+  `(Get-FileHash .\Supra-Setup.exe).Hash -eq (Get-Content .\Supra-Setup-0.11.52.exe.sha256).Split(' ')[0]`
+- **Mac** (Terminal), with `x64` in place of `arm64` for an Intel Mac:
+  `[ "$(shasum -a 256 Supra-Setup-Mac-arm64.dmg | cut -d' ' -f1)" = "$(cut -d' ' -f1 Supra-Setup-Mac-arm64.dmg.sha256)" ] && echo OK`
+
+If it prints `False` or nothing, do not open the file: delete it and download it again.
+
 ## Install
 
 ### Windows
