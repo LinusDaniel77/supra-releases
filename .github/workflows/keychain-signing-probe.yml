@@ -70,7 +70,7 @@ jobs:
             fi
             codesign --verify --deep --strict "$app"
             codesign -d -r- "$app" 2>&1 | grep designated
-            codesign -dv "$app" 2>&1 | grep CDHash
+            codesign -dvvv "$app" 2>&1 | grep -E "^CDHash=" || true
           }
           sign
           python3 "$RUNNER_TEMP/launch.py" A
