@@ -112,6 +112,14 @@ def verify_asset(path, asset):
     return actual
 
 
+class TimedOut(RuntimeError):
+    """A command that was killed at its time limit, with what it printed first."""
+
+    def __init__(self, name, timeout, output):
+        super().__init__(f"{name} timed out after {timeout} s; its last output:\n{output[-4000:]}")
+        self.output = output
+
+
 def run(args, timeout=300, env=None):
     options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
                else {"start_new_session": True})
@@ -126,8 +134,9 @@ def run(args, timeout=300, env=None):
             else:
                 os.killpg(process.pid, signal.SIGKILL)
             process.kill()
-            process.communicate(timeout=30)
-            raise
+            output, _ = process.communicate(timeout=30)
+            name = Path(args[0]).name if isinstance(args, list) else "installer"
+            raise TimedOut(name, timeout, (output or b"").decode("utf-8", errors="replace")) from None
         text = output.decode("utf-8", errors="replace")
         if process.returncode:
             raise RuntimeError(f"{Path(args[0]).name if isinstance(args, list) else 'installer'} "
@@ -160,7 +169,12 @@ def smoke(executable, label, evidence, report):
     for key in list(env):
         if key.endswith("API_KEY") or key in ("GH_TOKEN", "GITHUB_TOKEN", "ELECTRON_RUN_AS_NODE"):
             env.pop(key)
-    output = run([str(executable), "--smoke"], timeout=300, env=env)
+    try:
+        output = run([str(executable), "--smoke"], timeout=300, env=env)
+    except TimedOut as error:
+        # Keep what a hung launch printed: it is the only record of where it stopped.
+        (evidence / f"{label}.log").write_text(error.output, encoding="utf-8")
+        raise
     (evidence / f"{label}.log").write_text(output, encoding="utf-8")
     if "SMOKE OK: backend=bundled" not in output:
         raise RuntimeError(f"{label}: successful process exit without bundled-backend proof")

@@ -1,10 +1,12 @@
 import hashlib
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
-from verify_installed_release import (previous_stable, reported_data_dir, require_hosted_runner, require_stable,
-                                      require_upgrade_platform, verify_asset, version, windows_version_matches)
+from verify_installed_release import (TimedOut, previous_stable, reported_data_dir, require_hosted_runner,
+                                      require_stable, require_upgrade_platform, run, verify_asset, version,
+                                      windows_version_matches)
 
 
 class VerifierContracts(unittest.TestCase):
@@ -83,6 +85,13 @@ class VerifierContracts(unittest.TestCase):
                 reported_data_dir("SMOKE OK: backend=bundled\n", home)
             with tempfile.TemporaryDirectory() as elsewhere, self.assertRaisesRegex(RuntimeError, "Unexpected"):
                 reported_data_dir(f"[supra] data dir: {Path(elsewhere) / 'data'}\n", home)
+
+    def test_a_command_killed_at_its_limit_keeps_what_it_printed(self):
+        script = "import sys, time; print('[supra] data dir: /x', flush=True); time.sleep(30)"
+        with self.assertRaises(TimedOut) as caught:
+            run([sys.executable, "-c", script], timeout=2)
+        self.assertIn("[supra] data dir: /x", caught.exception.output)
+        self.assertIn("timed out after 2 s", str(caught.exception))
 
 
 if __name__ == "__main__":
