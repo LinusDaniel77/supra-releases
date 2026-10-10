@@ -1,0 +1,21 @@
+# Keeps the actions these workflows pin by commit SHA up to date.
+#
+# Every action here is pinned to a full SHA with its version in a comment, so
+# nothing moves unless someone moves it, and nobody did: by October 2026
+# setup-python, upload-artifact and setup-uv still targeted Node 20 after
+# GitHub had deprecated it, and it took a warning on every run to notice (#8).
+# Dependabot opens one pull request a month that moves every pinned action to
+# its latest release, SHA and comment together. Nothing merges without someone
+# reviewing it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: Workflows
