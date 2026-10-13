@@ -393,6 +393,9 @@ def updater_offers(executable, previous, tag, user_data, evidence, report, wait=
         raise RuntimeError(f"{previous}'s in-app updater did not offer {tag} (offered: {offered}); "
                            f"its updater log:\n{text[-4000:] or '(empty: no check ran)'}")
     report["checks"].append(f"{previous}-in-app-updater-offers-{tag}")
+    found = re.findall(r"^.*(?:Found version|check #\d+ completed).*$", text, re.MULTILINE)
+    # An annotation, so the result can be read from the run without its logs.
+    print(f"::notice title=In-app updater::{previous} offered {offered}: " + " | ".join(found[-2:]), flush=True)
 
 
 def main():
