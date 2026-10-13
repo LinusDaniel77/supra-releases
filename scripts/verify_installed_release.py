@@ -1,10 +1,11 @@
 """Install public releases ONLY on disposable GitHub-hosted Windows/Mac runners.
 
 No source checkout, signing secrets, provider credentials or application rebuild.
-This checks installed backend startup, and that upgrading (the Windows installer
+This checks installed backend startup, that upgrading (the Windows installer
 over the old one, or the new Mac app bundle over the old one) keeps the user's
-data, NOT interactive UI behavior, Gatekeeper/SmartScreen approval, or updater
-UI handoff.
+data, and that the previous release's own in-app updater finds the new one on
+the live feed. It does NOT check interactive UI behavior, Gatekeeper/SmartScreen
+approval, or the updater's download and restart handoff.
 """
 import hashlib
 import json
@@ -17,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 REPO = "LinusDaniel77/supra-releases"
 
@@ -303,23 +305,120 @@ def install_mac(tag, root, evidence, report):
     return executable, output
 
 
+# The terms version the app's own terms window records (desktop/main.js
+# LEGAL_ACCEPTANCE_VERSION). A normal launch waits on that window until it is
+# accepted; --smoke skips it, which is also why --smoke never runs the updater.
+TERMS_VERSION = "1.3"
+
+
+def accept_terms(user_data):
+    """Record the terms as accepted in the app's settings, keeping the rest."""
+    path = Path(user_data) / "settings.json"
+    settings = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            settings = loaded if isinstance(loaded, dict) else {}
+        except ValueError:
+            settings = {}
+    settings["legalAcceptanceVersion"] = TERMS_VERSION
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+
+def updater_log_path(user_data, system):
+    """Where Electron's app.getPath('logs') puts the updater's log."""
+    user_data = Path(user_data)
+    if system == "Darwin":
+        return Path.home() / "Library" / "Logs" / user_data.name / "updater.log"
+    return user_data / "logs" / "updater.log"
+
+
+def offered_version(log_text):
+    """The version a finished check offered, or None if the last finished
+    check did not offer one. Read from the app's updater log: electron-updater
+    logs "Found version X", and desktop/updater.js logs how each check ended."""
+    endings = re.findall(r"check #\d+ completed ([\w-]+)", log_text)
+    if not endings or endings[-1] != "update-available":
+        return None
+    found = re.findall(r"Found version (\S+)", log_text)
+    return found[-1].split("+", 1)[0] if found else None
+
+
+def stop_tree(process):
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], timeout=30, check=False,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.wait(timeout=30)
+
+
+def updater_offers(executable, previous, tag, user_data, evidence, report, wait=360):
+    """Launch the installed previous release the way a person does and wait
+    for its own updater to offer `tag`. The first check runs 45 s after the
+    backend is up; the launch is stopped as soon as a check has finished."""
+    accept_terms(user_data)
+    log = updater_log_path(user_data, platform.system())
+    if log.exists():
+        log.unlink()
+    env = dict(os.environ)
+    for key in list(env):
+        if key.endswith("API_KEY") or key in ("GH_TOKEN", "GITHUB_TOKEN", "ELECTRON_RUN_AS_NODE"):
+            env.pop(key)
+    options = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
+               else {"start_new_session": True})
+    process = subprocess.Popen([str(executable)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               env=env, **options)
+    text = ""
+    try:
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if log.is_file():
+                text = log.read_text(encoding="utf-8", errors="replace")
+            if re.search(r"check #\d+ completed", text) or process.poll() is not None:
+                break
+            time.sleep(5)
+    finally:
+        stop_tree(process)
+    if log.is_file():
+        text = log.read_text(encoding="utf-8", errors="replace")
+    (evidence / f"{previous}-updater.log").write_text(text, encoding="utf-8")
+    offered = offered_version(text)
+    if offered != version(tag):
+        raise RuntimeError(f"{previous}'s in-app updater did not offer {tag} (offered: {offered}); "
+                           f"its updater log:\n{text[-4000:] or '(empty: no check ran)'}")
+    report["checks"].append(f"{previous}-in-app-updater-offers-{tag}")
+
+
 def main():
     require_hosted_runner(os.environ)
     tag = os.environ["RELEASE_TAG"]
     version(tag)
     previous = os.environ.get("PREVIOUS_TAG", "").strip()
     upgrade = os.environ.get("TEST_UPGRADE") == "true"
-    if upgrade and not previous:
+    updater = os.environ.get("TEST_UPDATER") == "true"
+    if updater:
+        latest = json.loads(run(["gh", "api", f"repos/{REPO}/releases/latest"]))["tag_name"]
+        if latest != tag:
+            raise ValueError(f"The updater test needs {tag} to be the latest release; it is {latest}")
+    if (upgrade or updater) and not previous:
         previous = previous_stable(tag, json.loads(run(
             ["gh", "release", "list", "--repo", REPO, "--limit", "1000",
              "--json", "tagName,isDraft,isPrerelease"])))
-    if upgrade:
+    if upgrade or updater:
         require_upgrade_platform(platform.system(), previous, tag)
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
-    report = {"release": tag, "platform": platform.platform(), "upgrade_from": previous if upgrade else None,
+    report = {"release": tag, "platform": platform.platform(),
+              "upgrade_from": previous if upgrade else None,
+              "updater_from": previous if updater else None,
               "status": "failed", "artifacts": [], "checks": [], "warnings": [],
-              "limitations": ["No interactive CAD/UI or updater restart handoff test",
+              "limitations": ["No interactive CAD/UI or updater download and restart handoff test",
                               "No trusted publisher or clean-device OS reputation proof",
                               "No paid model evaluation"]}
     try:
@@ -330,6 +429,15 @@ def main():
             install = install_mac
         else:
             raise RuntimeError("Unsupported installation-test platform")
+        if updater:
+            # The previous release, as a person who has it installed would run
+            # it, must find this one on its own: the in-app update notice is
+            # the only way most people learn that a release exists.
+            executable, output = install(previous, root, evidence, report)
+            data = reported_data_dir(output, user_data_root())
+            updater_offers(executable, previous, tag, data.parent, evidence, report)
+            report["status"] = "passed"
+            return
         if upgrade:
             # Install the older release, let it create its data directory, and
             # leave a marker there. Installing the new release over it must

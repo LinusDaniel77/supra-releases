@@ -49,6 +49,16 @@ jobs:
           - name: mac-x64-clean
             runner: macos-15-intel
             upgrade: 'false'
+          # The previous release, installed and launched normally, must find
+          # this one through its own in-app updater on the live feed.
+          - name: windows-updater
+            runner: windows-latest
+            upgrade: 'false'
+            updater: 'true'
+          - name: mac-arm64-updater
+            runner: macos-15
+            upgrade: 'false'
+            updater: 'true'
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.known_failure == 'true' }}
     steps:
@@ -66,6 +76,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           PREVIOUS_TAG: ${{ inputs.previous_tag }}
           TEST_UPGRADE: ${{ matrix.upgrade }}
+          TEST_UPDATER: ${{ matrix.updater || 'false' }}
         run: python scripts/verify_installed_release.py
       - name: Preserve verification evidence (not installers)
         if: always()
