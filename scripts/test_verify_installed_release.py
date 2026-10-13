@@ -6,10 +6,52 @@ import tempfile
 import unittest
 from unittest import mock
 
-from verify_installed_release import (TimedOut, check_sidecar, download, keychain_prompt, previous_stable,
+from verify_installed_release import (TERMS_VERSION, TimedOut, accept_terms, check_sidecar, download, keychain_prompt,
+                                      offered_version, previous_stable, updater_log_path,
                                       reported_data_dir, require_hosted_runner, require_stable,
                                       require_upgrade_platform, run, verify_asset, version,
                                       windows_version_matches)
+
+
+class InAppUpdater(unittest.TestCase):
+    LOG_FOUND = (
+        "2026-10-13T03:00:00.000Z [updater] check #1 started {\"manual\":false,\"currentVersion\":\"0.11.56\"}\n"
+        "2026-10-13T03:00:01.000Z [updater] Found version 0.11.57+1013.6c5777a (url: Supra-Setup-0.11.57.exe)\n"
+        "2026-10-13T03:00:01.000Z [updater] check #1 completed update-available\n"
+        "2026-10-13T03:00:01.000Z [updater] phase checking -> available\n")
+
+    def test_reads_the_offered_version_without_build_metadata(self):
+        self.assertEqual(offered_version(self.LOG_FOUND), "0.11.57")
+
+    def test_no_offer_when_the_check_found_nothing_failed_or_never_ran(self):
+        not_found = ("[updater] check #1 started\n[updater] Update for version 0.11.57 is not available "
+                     "(latest version: 0.11.57, downgrade is disallowed).\n[updater] check #1 completed update-not-available\n")
+        failed = "[updater] check #1 started\n[updater] check failed (deadline): no answer\n[updater] check #1 completed deadline\n"
+        for text in ("", not_found, failed, "[updater] Found version 0.11.57 (url: x)\n"):
+            with self.subTest(text=text[:40]):
+                self.assertIsNone(offered_version(text))
+
+    def test_the_last_finished_check_decides(self):
+        later = self.LOG_FOUND + "[updater] check #2 started\n[updater] check #2 completed update-not-available\n"
+        self.assertIsNone(offered_version(later))
+
+    def test_terms_are_accepted_without_losing_other_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(json.dumps({"theme": {"bg": "#fdf8f2"}}), encoding="utf-8")
+            accept_terms(directory)
+            settings = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(settings["legalAcceptanceVersion"], TERMS_VERSION)
+            self.assertEqual(settings["theme"], {"bg": "#fdf8f2"})
+            path.write_text("not json", encoding="utf-8")
+            accept_terms(directory)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"legalAcceptanceVersion": TERMS_VERSION})
+
+    def test_the_log_is_where_electron_puts_it(self):
+        self.assertEqual(updater_log_path("C:/Users/r/AppData/Roaming/Supra", "Windows"),
+                         Path("C:/Users/r/AppData/Roaming/Supra/logs/updater.log"))
+        self.assertEqual(updater_log_path("/Users/r/Library/Application Support/Supra", "Darwin"),
+                         Path.home() / "Library" / "Logs" / "Supra" / "updater.log")
 
 
 class VerifierContracts(unittest.TestCase):
