@@ -1,0 +1,48 @@
+name: Prove stable Mac signing
+
+# Whether one signing certificate, kept from build to build, lets an updated
+# Supra read its keychain item without macOS asking for the password. See
+# scripts/prove_mac_signing.py. A self-signed certificate does not (run
+# 38503428302, PR #20), so this fails by design until it is given a
+# certificate with an Apple Team ID. Runs only by hand, so the expected
+# failure never marks a commit on main.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release whose Mac app to re-sign (empty uses the latest)
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: Same certificate, later build, no prompt
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - name: Test the signing helpers
+        run: python -m unittest discover -s scripts -p "test_mac_signing.py" -v
+      - name: Sign two builds with one certificate and launch them in turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        working-directory: scripts
+        run: python prove_mac_signing.py
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stable-mac-signing
+          path: scripts/signing-evidence/
+          if-no-files-found: warn
+          retention-days: 14
