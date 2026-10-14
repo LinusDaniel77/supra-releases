@@ -35,12 +35,21 @@ from verify_installed_release import download, require_hosted_runner, run, smoke
 SERVICE = "Supra Safe Storage"
 
 
+def requirement_of(text):
+    """The designated requirement in `codesign -d -r-` output. An ad-hoc
+    signature has only an implied one, which codesign prints as a comment."""
+    for line in text.splitlines():
+        line = line.strip().removeprefix("#").strip()
+        if line.startswith("designated =>"):
+            return line.split("=>", 1)[1].strip()
+    return ""
+
+
 def signature(app):
     """(designated requirement, CDHash) of a signed bundle, from codesign -d."""
     done = subprocess.run(["codesign", "-d", "-r-", "--verbose=4", str(app)], capture_output=True, text=True)
     text = done.stdout + done.stderr
-    requirement = next((line.split("=>", 1)[1].strip() for line in text.splitlines()
-                        if line.startswith("designated =>")), "")
+    requirement = requirement_of(text)
     cdhash = next((line.split("=", 1)[1].strip() for line in text.splitlines() if line.startswith("CDHash=")), "")
     if not requirement or not cdhash:
         raise RuntimeError(f"codesign did not describe {app}: {text[-1500:]}")

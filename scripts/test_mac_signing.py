@@ -75,5 +75,15 @@ class ReleaseBuildStep(unittest.TestCase):
             self.assertFalse((Path(directory) / "supra-signing.p12").exists())
 
 
+class ReadsCodesignRequirements(unittest.TestCase):
+    def test_a_certificate_requirement_and_an_implied_ad_hoc_one(self):
+        from prove_mac_signing import requirement_of
+        cert = 'Executable=/x/Supra\ndesignated => identifier "dev.silviaai.supra" and certificate root = H"0123"\n'
+        adhoc = 'Executable=/x/Supra\n# designated => cdhash H"f899"\n'
+        self.assertEqual(requirement_of(cert), 'identifier "dev.silviaai.supra" and certificate root = H"0123"')
+        self.assertEqual(requirement_of(adhoc), 'cdhash H"f899"')
+        self.assertEqual(requirement_of("Executable=/x/Supra\n"), "")
+
+
 if __name__ == "__main__":
     unittest.main()
