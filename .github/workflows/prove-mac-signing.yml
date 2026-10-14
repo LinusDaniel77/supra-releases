@@ -1,9 +1,11 @@
 name: Prove stable Mac signing
 
-# Whether one self-signed certificate, kept from build to build, lets an
-# updated Supra read its keychain item without macOS asking for the password.
-# See scripts/prove_mac_signing.py. Runs on a push that changes the proof, and
-# by hand.
+# Whether one signing certificate, kept from build to build, lets an updated
+# Supra read its keychain item without macOS asking for the password. See
+# scripts/prove_mac_signing.py. A self-signed certificate does not (run
+# 38503428302, PR #20), so this fails by design until it is given a
+# certificate with an Apple Team ID. Runs only by hand, so the expected
+# failure never marks a commit on main.
 on:
   workflow_dispatch:
     inputs:
@@ -12,11 +14,6 @@ on:
         type: string
         required: false
         default: ''
-  push:
-    paths:
-      - .github/workflows/prove-mac-signing.yml
-      - scripts/prove_mac_signing.py
-      - scripts/mac_signing.py
 
 permissions:
   contents: read
