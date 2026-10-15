@@ -41,12 +41,22 @@ class MakesACodeSigningCertificate(unittest.TestCase):
             # "CN=Supra test" on others (the Windows runner's); both name it.
             self.assertRegex(cert, r"CN ?= ?Supra test")
             # The encryption macOS `security import` reads, whatever OpenSSL wrote by default.
+            # Reading it back needs OpenSSL 3's legacy provider, which the Windows
+            # runner's OpenSSL ships without (legacy.dll will not load). The bundle
+            # is only ever imported on a Mac, where this runs in full.
+            if self.openssl3() and not self.legacy_provider():
+                self.skipTest("this OpenSSL cannot load its legacy provider, so it cannot read the bundle back")
             info = subprocess.run(["openssl", "pkcs12", "-in", p12, "-info", "-noout", "-passin", f"pass:{password}",
                                    *(["-legacy"] if self.openssl3() else [])],
                                   capture_output=True, text=True)
             self.assertEqual(info.returncode, 0, info.stderr)
             self.assertRegex(info.stdout + info.stderr, r"(?i)TripleDES|3DES|des-ede3")
             self.assertRegex(info.stdout + info.stderr, r"(?i)MAC: sha1")
+
+    @staticmethod
+    def legacy_provider():
+        return subprocess.run(["openssl", "list", "-providers", "-provider", "legacy"],
+                              capture_output=True, text=True).returncode == 0
 
     @staticmethod
     def openssl3():
