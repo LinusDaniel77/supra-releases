@@ -37,7 +37,9 @@ class MakesACodeSigningCertificate(unittest.TestCase):
                                   capture_output=True, text=True, check=True).stdout
             self.assertIn("Code Signing", cert)
             self.assertIn("CA:FALSE", cert)
-            self.assertIn("CN = Supra test", cert)
+            # OpenSSL prints the subject as "CN = Supra test" on some builds and
+            # "CN=Supra test" on others (the Windows runner's); both name it.
+            self.assertRegex(cert, r"CN ?= ?Supra test")
             # The encryption macOS `security import` reads, whatever OpenSSL wrote by default.
             info = subprocess.run(["openssl", "pkcs12", "-in", p12, "-info", "-noout", "-passin", f"pass:{password}",
                                    *(["-legacy"] if self.openssl3() else [])],
