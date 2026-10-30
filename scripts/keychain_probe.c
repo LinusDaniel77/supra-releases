@@ -46,7 +46,7 @@ static int tool_write(const char *service, const char *account, const char *secr
   if (!tool) return 1;
   fprintf(tool, "add-generic-password -U -s \"%s\" -a \"%s\" -X ", service, account);
   for (const char *c = secret; *c; c++) fprintf(tool, "%02x", (unsigned char)*c);
-  fprintf(tool, "\nquit\n");
+  fprintf(tool, "\n"); /* end of input ends the session */
   return pclose(tool) == 0 ? 0 : 1;
 }
 
