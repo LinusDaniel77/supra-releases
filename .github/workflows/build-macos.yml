@@ -26,8 +26,13 @@ on:
         default: false
         type: boolean
 
+# Read-only by default. The build job runs code from source_ref (npm scripts,
+# build tools, the project's own build script, its node_modules), so it must
+# never hold a token that can write this repository's releases (security audit
+# 2026-11, h14). Only the publish job below can, and it runs no code from the
+# source repository.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: macos-installer-${{ inputs.architecture }}
@@ -151,15 +156,14 @@ jobs:
             echo "Public beta recovery build. Developer ID signing and notarization are not configured."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish public recovery assets
+      - name: Write this architecture's update feed
         if: ${{ inputs.publish }}
         env:
-          GH_TOKEN: ${{ github.token }}
           MIN_MACOS: ${{ steps.artifact.outputs.min_macos }}
         shell: bash
         run: |
           set -euo pipefail
-          metadata="latest-mac-${ARCHITECTURE}.yml"
+          metadata="source/desktop/dist/latest-mac-${ARCHITECTURE}.yml"
           cp source/desktop/dist/latest-mac.yml "$metadata"
 
           # THE UPDATE FEED CARRIES THE OS FLOOR, IN DARWIN TERMS. electron-builder
@@ -192,10 +196,55 @@ jobs:
           fs.writeFileSync(file, yaml.dump(doc, { lineWidth: -1 }));
           console.log(`macOS ${macos} -> feed minimumSystemVersion ${doc.minimumSystemVersion}`);
           NODE
-          gh release upload "${RELEASE_TAG}" \
-            "${{ steps.artifact.outputs.dmg }}" \
-            "${{ steps.artifact.outputs.checksum }}" \
-            "$metadata" \
+
+      - name: Hand the verified files to the publish job
+        if: ${{ inputs.publish }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ inputs.architecture }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ${{ steps.artifact.outputs.dmg }}
+            ${{ steps.artifact.outputs.checksum }}
+            source/desktop/dist/latest-mac-${{ inputs.architecture }}.yml
+
+  publish:
+    name: Publish the verified installer
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that can write a release. It checks out nothing and runs
+    # nothing from the source repository; the feed is combined with a pinned
+    # YAML library, never with the source's own node_modules.
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ARCHITECTURE: ${{ inputs.architecture }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-${{ inputs.architecture }}
+          path: dist
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Publish public recovery assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          dmg="Supra-Setup-Mac-${ARCHITECTURE}.dmg"
+          metadata="latest-mac-${ARCHITECTURE}.yml"
+          test -s "$dmg" && test -s "$metadata"
+          shasum -a 256 -c "$dmg.sha256"
+          gh release upload "${RELEASE_TAG}" "$dmg" "$dmg.sha256" "$metadata" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
           # The updater reads one channel file on both Mac architectures. Once
@@ -211,29 +260,29 @@ jobs:
             --dir combined-metadata || true
           if [[ -f combined-metadata/latest-mac-arm64.yml && \
                 -f combined-metadata/latest-mac-x64.yml ]]; then
-            node - <<'NODE'
-          const fs = require('fs');
-          const yaml = require('./source/desktop/node_modules/js-yaml');
-          const arm = yaml.load(fs.readFileSync('combined-metadata/latest-mac-arm64.yml', 'utf8'));
-          const x64 = yaml.load(fs.readFileSync('combined-metadata/latest-mac-x64.yml', 'utf8'));
-          if (arm.version !== x64.version) throw new Error('Mac metadata versions differ');
-          if (!arm.minimumSystemVersion || !x64.minimumSystemVersion) {
-            throw new Error('Mac metadata is missing minimumSystemVersion; refusing to publish an unguarded feed');
-          }
-          // The higher of the two floors, compared numerically.
-          const num = (v) => String(v).split('.').map(Number);
-          const higher = (a, b) => {
-            const [x, y] = [num(a), num(b)];
-            for (let i = 0; i < 3; i += 1) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0) ? a : b;
-            return a;
-          };
-          const combined = {
-            ...arm,
-            files: [...(arm.files || []), ...(x64.files || [])],
-            minimumSystemVersion: higher(arm.minimumSystemVersion, x64.minimumSystemVersion),
-          };
-          fs.writeFileSync('latest-mac.yml', yaml.dump(combined, { lineWidth: -1 }));
-          NODE
+            python -m pip install --quiet "pyyaml==6.0.2"
+            python - <<'PY'
+          import yaml
+
+          arm = yaml.safe_load(open("combined-metadata/latest-mac-arm64.yml", encoding="utf-8"))
+          x64 = yaml.safe_load(open("combined-metadata/latest-mac-x64.yml", encoding="utf-8"))
+          if arm.get("version") != x64.get("version"):
+              raise SystemExit("Mac metadata versions differ")
+          if not arm.get("minimumSystemVersion") or not x64.get("minimumSystemVersion"):
+              raise SystemExit("Mac metadata is missing minimumSystemVersion; refusing to publish an unguarded feed")
+
+
+          def number(version):
+              return [int(part) for part in str(version).split(".")[:3]] + [0] * 3
+
+
+          # The higher of the two floors, compared numerically.
+          floor = max(arm["minimumSystemVersion"], x64["minimumSystemVersion"], key=lambda v: number(v)[:3])
+          combined = {**arm, "files": list(arm.get("files") or []) + list(x64.get("files") or []),
+                      "minimumSystemVersion": floor}
+          with open("latest-mac.yml", "w", encoding="utf-8") as out:
+              yaml.safe_dump(combined, out, sort_keys=False, width=10_000)
+          PY
             gh release upload "${RELEASE_TAG}" latest-mac.yml \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
