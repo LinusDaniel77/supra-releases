@@ -26,8 +26,13 @@ on:
         default: false
         type: boolean
 
+# Read-only by default. The build job runs code from source_ref (npm scripts,
+# build tools, the project's own build script), so it must never hold a token
+# that can write this repository's releases (security audit 2026-11, h14). Only
+# the publish job below can, and it runs no code from the source repository:
+# it uploads the files the build job verified.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: windows-installer
@@ -38,6 +43,8 @@ jobs:
     name: Build and verify Windows x64
     runs-on: windows-latest
     timeout-minutes: 120
+    outputs:
+      installer: ${{ steps.artifact.outputs.installer }}
 
     # Inputs reach run: scripts only through these variables. An expression
     # spliced into a script is substituted before the shell parses it, so a
@@ -178,17 +185,50 @@ jobs:
             echo "- Publish requested: \`${PUBLISH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish public recovery assets
+      - name: Hand the verified files to the publish job
         if: ${{ inputs.publish }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            source/desktop/dist/${{ steps.artifact.outputs.installer }}
+            source/desktop/dist/${{ steps.artifact.outputs.installer }}.sha256
+            source/desktop/dist/latest.yml
+            source/desktop/dist/INSTALLER_STAMP.json
+
+  publish:
+    name: Publish the verified installer
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that can write a release. It checks out nothing and runs
+    # nothing from the source repository.
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      INSTALLER: ${{ needs.build.outputs.installer }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-installer
+          path: dist
+
+      - name: Publish public recovery assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          cd source/desktop/dist
-          cp "${{ steps.artifact.outputs.installer }}" Supra-Setup.exe
+          cd dist
+          test -s "$INSTALLER"
+          (sha256sum -c "$INSTALLER.sha256")
+          cp "$INSTALLER" Supra-Setup.exe
           gh release upload "${RELEASE_TAG}" \
-            "${{ steps.artifact.outputs.installer }}" \
-            "${{ steps.artifact.outputs.installer }}.sha256" \
+            "$INSTALLER" \
+            "$INSTALLER.sha256" \
             Supra-Setup.exe latest.yml INSTALLER_STAMP.json \
             --repo "$GITHUB_REPOSITORY" --clobber
