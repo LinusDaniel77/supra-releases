@@ -28,7 +28,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Throwaway branch: only the install over a locked 0.32.5.
+          # Throwaway branch: Windows only, before the release is promoted.
+          - name: windows-clean
+            runner: windows-latest
+            upgrade: 'false'
           - name: windows-upgrade
             runner: windows-latest
             upgrade: 'true'
