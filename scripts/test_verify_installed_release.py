@@ -9,6 +9,7 @@ from unittest import mock
 from verify_installed_release import (TERMS_VERSION, TimedOut, accept_terms, check_sidecar, download, keychain_prompt,
                                       offered_version, previous_stable, updater_log_path,
                                       reported_data_dir, require_hosted_runner, require_stable,
+                                      require_updater_after_promotion,
                                       require_upgrade_platform, run, verify_asset, version,
                                       windows_version_matches)
 
@@ -111,6 +112,36 @@ class VerifierContracts(unittest.TestCase):
                                  ({**stable, "tagName": "v0.11.50"}, "GitHub returned v0.11.50")):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
                 require_stable("v0.11.51", metadata)
+
+    def test_a_pre_release_is_installed_only_when_it_is_checked_before_promotion(self):
+        stable = {"tagName": "v0.11.51", "isDraft": False, "isPrerelease": False}
+        pre = {**stable, "isPrerelease": True}
+        require_stable("v0.11.51", pre, prerelease_ok=True)
+        require_stable("v0.11.51", stable, prerelease_ok=True)
+        with self.assertRaisesRegex(ValueError, "only before promotion"):
+            require_stable("v0.11.51", pre)
+        # A draft is never installed, and the tag must still be the one asked for.
+        for metadata, reason in (({**pre, "isDraft": True}, "is a draft"),
+                                 ({**stable, "isDraft": True}, "is a draft"),
+                                 ({**pre, "tagName": "v0.11.50"}, "GitHub returned v0.11.50")):
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                require_stable("v0.11.51", metadata, prerelease_ok=True)
+
+    def test_the_updater_test_waits_for_promotion(self):
+        require_updater_after_promotion(False, True)
+        require_updater_after_promotion(True, False)
+        with self.assertRaisesRegex(ValueError, "runs after promotion"):
+            require_updater_after_promotion(True, True)
+
+    def test_only_the_release_being_checked_may_be_a_pre_release(self):
+        # The release an upgrade starts from is installed with the stable-only
+        # default; only the checked release is passed prerelease_ok.
+        source = (Path(__file__).parent / "verify_installed_release.py").read_text(encoding="utf-8")
+        main = source[source.index("def main():"):]
+        self.assertIn("install(tag, root, evidence, report, prerelease_ok=before_promotion)", main)
+        for call in ("install(previous, root, evidence, report)",):
+            self.assertIn(call, main)
+        self.assertNotIn("install(previous, root, evidence, report, prerelease_ok", main)
 
     def test_upgrades_run_on_windows_and_mac_from_an_older_release(self):
         for system in ("Windows", "Darwin"):

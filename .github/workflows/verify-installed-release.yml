@@ -1,10 +1,13 @@
 name: Verify published installers
+# The run's name carries the tag, and says "before promotion" for a check of a
+# pre-release: promote-release looks for that exact name on main.
+run-name: Verify ${{ inputs.release_tag }}${{ inputs.before_promotion && ' before promotion' || '' }}
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Published stable release to install and launch
+        description: Release to install and launch (a pre-release only with before_promotion)
         type: string
         required: true
       previous_tag:
@@ -12,6 +15,11 @@ on:
         type: string
         required: false
         default: ''
+      before_promotion:
+        description: Check the release while it is still a pre-release, before promote-release offers it to everyone (the in-app updater jobs wait for promotion)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -70,13 +78,21 @@ jobs:
           python-version: '3.13'
       - name: Test verifier safety and input contracts
         run: python -m unittest discover -s scripts -p "test_*.py" -v
+      - name: The in-app updater test runs after promotion
+        if: ${{ inputs.before_promotion && matrix.updater == 'true' }}
+        shell: bash
+        run: |
+          echo "::notice title=Runs after promotion::The live feed offers only the latest release, so ${{ matrix.name }} runs once the release is promoted."
+          echo "${{ matrix.name }}: not run before promotion; run this workflow again after promote-release." >> "$GITHUB_STEP_SUMMARY"
       - name: Download, verify, install, and cold-launch published application
+        if: ${{ !(inputs.before_promotion && matrix.updater == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           PREVIOUS_TAG: ${{ inputs.previous_tag }}
           TEST_UPGRADE: ${{ matrix.upgrade }}
           TEST_UPDATER: ${{ matrix.updater || 'false' }}
+          BEFORE_PROMOTION: ${{ inputs.before_promotion && 'true' || 'false' }}
         run: python scripts/verify_installed_release.py
       - name: Preserve verification evidence (not installers)
         if: always()

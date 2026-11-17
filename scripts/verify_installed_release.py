@@ -33,12 +33,25 @@ def version_key(tag):
     return tuple(map(int, version(tag).split(".")))
 
 
-def require_stable(tag, metadata):
+def require_stable(tag, metadata, prerelease_ok=False):
+    """A draft is never installed. A pre-release is installed only when it is
+    the release being checked before promotion (prerelease_ok): that is the
+    one moment it can still be stopped before every update check offers it."""
     if metadata["tagName"] != tag:
         raise ValueError(f"Asked for {tag}, but GitHub returned {metadata['tagName']}")
-    if metadata["isDraft"] or metadata["isPrerelease"]:
-        kind = "a draft" if metadata["isDraft"] else "a pre-release"
-        raise ValueError(f"{tag} is {kind}; only published stable releases may be installed")
+    if metadata["isDraft"]:
+        raise ValueError(f"{tag} is a draft; only published releases may be installed")
+    if metadata["isPrerelease"] and not prerelease_ok:
+        raise ValueError(f"{tag} is a pre-release; only published stable releases may be installed "
+                         "(a release is checked as a pre-release only before promotion)")
+
+
+def require_updater_after_promotion(before_promotion, updater):
+    """The in-app updater test asks the live feed, which offers only the
+    latest release, so it can only run once the release is promoted."""
+    if before_promotion and updater:
+        raise ValueError("The in-app updater test runs after promotion: before it, the feed "
+                         "still offers the previous release")
 
 
 def previous_stable(tag, releases):
@@ -201,11 +214,11 @@ def run(args, timeout=300, env=None, diagnose=False):
         return text
 
 
-def download(tag, name, root, report):
+def download(tag, name, root, report, prerelease_ok=False):
     version(tag)
     metadata = json.loads(run(["gh", "release", "view", tag, "--repo", REPO,
                                "--json", "tagName,isDraft,isPrerelease,assets"]))
-    require_stable(tag, metadata)
+    require_stable(tag, metadata, prerelease_ok)
     directory = root / tag
     directory.mkdir(exist_ok=True)
 
@@ -254,8 +267,8 @@ def smoke(executable, label, evidence, report):
     return output
 
 
-def install_windows(tag, root, evidence, report):
-    installer = download(tag, f"Supra-Setup-{version(tag)}.exe", root, report)
+def install_windows(tag, root, evidence, report, prerelease_ok=False):
+    installer = download(tag, f"Supra-Setup-{version(tag)}.exe", root, report, prerelease_ok)
     destination = root / "installed-supra"
     # NSIS /D must be LAST and unquoted, even when the path contains spaces.
     # https://nsis.sourceforge.io/Docs/Chapter3.html
@@ -273,9 +286,9 @@ def install_windows(tag, root, evidence, report):
     return executable, output
 
 
-def install_mac(tag, root, evidence, report):
+def install_mac(tag, root, evidence, report, prerelease_ok=False):
     arch = {"arm64": "arm64", "x86_64": "x64"}[platform.machine()]
-    dmg = download(tag, f"Supra-Setup-Mac-{arch}.dmg", root, report)
+    dmg = download(tag, f"Supra-Setup-Mac-{arch}.dmg", root, report, prerelease_ok)
     run(["hdiutil", "verify", str(dmg)])
     mount = root / "mounted"
     app = root / "installed" / "Supra.app"
@@ -405,6 +418,8 @@ def main():
     previous = os.environ.get("PREVIOUS_TAG", "").strip()
     upgrade = os.environ.get("TEST_UPGRADE") == "true"
     updater = os.environ.get("TEST_UPDATER") == "true"
+    before_promotion = os.environ.get("BEFORE_PROMOTION") == "true"
+    require_updater_after_promotion(before_promotion, updater)
     if updater:
         latest = json.loads(run(["gh", "api", f"repos/{REPO}/releases/latest"]))["tag_name"]
         if latest != tag:
@@ -418,6 +433,7 @@ def main():
     evidence = Path("installed-evidence")
     evidence.mkdir(exist_ok=True)
     report = {"release": tag, "platform": platform.platform(),
+              "before_promotion": before_promotion,
               "upgrade_from": previous if upgrade else None,
               "updater_from": previous if updater else None,
               "status": "failed", "artifacts": [], "checks": [], "warnings": [],
@@ -453,7 +469,7 @@ def main():
                 raise RuntimeError(f"Baseline data directory does not exist: {data}")
             marker = data / "ci-preservation-marker.txt"
             marker.write_text("preserve-existing-project-data", encoding="utf-8")
-        executable, output = install(tag, root, evidence, report)
+        executable, output = install(tag, root, evidence, report, prerelease_ok=before_promotion)
         if upgrade:
             if reported_data_dir(output, user_data_root()) != data:
                 raise RuntimeError("New installation silently switched its data directory")
