@@ -36,6 +36,9 @@ def version_key(tag):
 def require_stable(tag, metadata):
     if metadata["tagName"] != tag:
         raise ValueError(f"Asked for {tag}, but GitHub returned {metadata['tagName']}")
+    # Throwaway branch: v0.32.6 is checked on Windows while it is still a pre-release.
+    if metadata["isPrerelease"] and not metadata["isDraft"] and tag == "v0.32.6":
+        return
     if metadata["isDraft"] or metadata["isPrerelease"]:
         kind = "a draft" if metadata["isDraft"] else "a pre-release"
         raise ValueError(f"{tag} is {kind}; only published stable releases may be installed")
