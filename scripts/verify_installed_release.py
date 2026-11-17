@@ -254,6 +254,20 @@ def smoke(executable, label, evidence, report):
     return output
 
 
+def install_windows_locked(tag, root, evidence, report):
+    """Throwaway branch only: install a release whose files come out locked
+    (0.32.5) without checking or starting it, as a person who installed it has."""
+    installer = download(tag, f"Supra-Setup-{version(tag)}.exe", root, report)
+    destination = root / "installed-supra"
+    command = subprocess.list2cmdline([str(installer)]) + f" /S /currentuser /D={destination}"
+    run(command, timeout=600)
+    exe = destination / "Supra.exe"
+    print("::group::locked install: icacls Supra.exe", flush=True)
+    print(subprocess.run(["icacls", str(exe)], capture_output=True, text=True).stdout, flush=True)
+    print("::endgroup::", flush=True)
+    report["checks"].append(f"{tag}-installed-locked")
+
+
 def install_windows(tag, root, evidence, report):
     installer = download(tag, f"Supra-Setup-{version(tag)}.exe", root, report)
     destination = root / "installed-supra"
@@ -450,6 +464,14 @@ def main():
             executable, output = install(previous, root, evidence, report)
             data = reported_data_dir(output, user_data_root())
             updater_offers(executable, previous, tag, data.parent, evidence, report)
+            report["status"] = "passed"
+            return
+        if upgrade and os.environ.get("LOCKED_PREVIOUS") == "true":
+            install_windows_locked(previous, root, evidence, report)
+            executable, output = install(tag, root, evidence, report)
+            print(subprocess.run(["icacls", str(executable)], capture_output=True, text=True).stdout, flush=True)
+            smoke(executable, f"{tag}-second-installed-start", evidence, report)
+            report["checks"].append(f"{tag}-repaired-a-locked-{previous}")
             report["status"] = "passed"
             return
         if upgrade:
