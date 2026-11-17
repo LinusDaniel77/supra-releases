@@ -5,6 +5,15 @@ name: Promote release
 # makes this release "latest", which is where the README's download links and
 # every installed copy's update check point, so a missing file would be a
 # broken download or a failed update for everyone on that platform.
+#
+# It also needs a passing run of verify-installed-release with
+# before_promotion, on main, started after the release's files were last
+# uploaded: the installers must have been installed and started on Windows and
+# on both Macs while the release was still a pre-release. 0.32.5 was promoted
+# first and checked after, and its Windows installer, which locked every file it
+# installed, was the release every update check offered for 9 minutes. The one
+# exception is a rollback: putting an older release that was already public
+# back as latest.
 
 on:
   workflow_dispatch:
@@ -18,9 +27,15 @@ on:
         required: true
         default: false
         type: boolean
+      rollback:
+        description: Put an older release that was already public back as latest (skips the before-promotion install check)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: promote-release-${{ inputs.tag }}
@@ -65,6 +80,42 @@ jobs:
             echo "::error::${TAG} is missing: ${missing[*]}. Attach them before promoting."
             exit 1
           fi
+
+      - name: Require a passing install check from before promotion
+        if: ${{ !inputs.rollback }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WANT="Verify ${TAG} before promotion"
+          newest_file="$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" \
+                         --json assets --jq '[.assets[].updatedAt] | max')"
+          started="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/verify-installed-release.yml/runs?branch=main&event=workflow_dispatch&status=success&per_page=100" \
+                     --jq '.workflow_runs[] | select(.display_title == env.WANT) | .created_at')"
+          passed=""
+          while read -r at; do
+            if [ -n "$at" ] && [[ "$at" > "$newest_file" ]]; then passed="$at"; break; fi
+          done <<<"$started"
+          if [ -z "$passed" ]; then
+            echo "::error::No passing \"${WANT}\" run on main started after ${TAG}'s files were last uploaded (${newest_file}). Run verify-installed-release with release_tag ${TAG} and before_promotion, then promote."
+            exit 1
+          fi
+          echo "Installed and started before promotion: the check that started at ${passed} passed (files last uploaded ${newest_file})."
+
+      - name: A rollback only puts back a release that was already public
+        if: ${{ inputs.rollback }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pre="$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          if [ "$pre" != "false" ]; then
+            echo "::error::${TAG} has never been public, so it cannot be rolled back to. Check it with before_promotion and promote it normally."
+            exit 1
+          fi
+          echo "::warning title=Rollback::${TAG} is put back as latest without a new install check."
 
       - name: Clear the prerelease flag
         env:
