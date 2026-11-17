@@ -8,7 +8,7 @@ from unittest import mock
 
 from verify_installed_release import (TERMS_VERSION, TimedOut, accept_terms, check_sidecar, download, keychain_prompt,
                                       offered_version, previous_stable, updater_log_path,
-                                      reported_data_dir, require_hosted_runner, require_stable,
+                                      private_folder_problems, reported_data_dir, require_hosted_runner, require_stable,
                                       require_updater_after_promotion,
                                       require_upgrade_platform, run, verify_asset, version,
                                       windows_version_matches)
@@ -138,10 +138,40 @@ class VerifierContracts(unittest.TestCase):
         # default; only the checked release is passed prerelease_ok.
         source = (Path(__file__).parent / "verify_installed_release.py").read_text(encoding="utf-8")
         main = source[source.index("def main():"):]
-        self.assertIn("install(tag, root, evidence, report, prerelease_ok=before_promotion)", main)
+        self.assertIn("install(tag, root, evidence, report, prerelease_ok=before_promotion, checked=True)", main)
         for call in ("install(previous, root, evidence, report)",):
             self.assertIn(call, main)
         self.assertNotIn("install(previous, root, evidence, report, prerelease_ok", main)
+
+    # icacls output as a Windows runner prints it (verify-installed-release, 2026-11-17).
+    PRIVATE_FOLDER = ("D:\\a\\_temp\\supra-install-x\\installed-supra BUILTIN\\Administrators:(OI)(CI)(F)\n"
+                      "    NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n    runnervm\\runneradmin:(OI)(CI)(F)\n")
+    INHERITED_EXE = ("D:\\a\\_temp\\supra-install-x\\installed-supra\\Supra.exe BUILTIN\\Administrators:(I)(F)\n"
+                     "    NT AUTHORITY\\SYSTEM:(I)(F)\n    runnervm\\runneradmin:(I)(F)\n")
+
+    def test_a_private_install_folder_passes(self):
+        self.assertEqual(private_folder_problems(self.PRIVATE_FOLDER, self.INHERITED_EXE, "runnervm\\runneradmin"), [])
+
+    def test_a_folder_that_still_takes_the_drives_permissions_is_named(self):
+        drive = self.PRIVATE_FOLDER + "    BUILTIN\\Users:(I)(OI)(CI)(RX)\n    NT AUTHORITY\\Authenticated Users:(I)(M)\n"
+        problems = private_folder_problems(drive, self.INHERITED_EXE, "runnervm\\runneradmin")
+        self.assertEqual(problems, ["the folder still lets BUILTIN\\Users in",
+                                    "the folder still lets NT AUTHORITY\\Authenticated Users in"])
+
+    def test_a_group_is_matched_whole(self):
+        # "Local account" (S-1-5-113) is not Authenticated Users (S-1-5-11).
+        local = self.PRIVATE_FOLDER + "    *S-1-5-113:(OI)(CI)(RX)\n"
+        self.assertEqual(private_folder_problems(local, self.INHERITED_EXE, "runnervm\\runneradmin"), [])
+        sid = self.PRIVATE_FOLDER + "    *S-1-5-11:(OI)(CI)(RX)\n"
+        self.assertEqual(private_folder_problems(sid, self.INHERITED_EXE, "runnervm\\runneradmin"),
+                         ["the folder still lets *S-1-5-11 in"])
+
+    def test_the_locked_files_of_0_32_5_are_named(self):
+        # 0.32.5: the folder had its three grants and Supra.exe had none.
+        locked = "D:\\a\\_temp\\supra-install-x\\installed-supra\\Supra.exe \nSuccessfully processed 1 files\n"
+        problems = private_folder_problems(self.PRIVATE_FOLDER, locked, "runnervm\\runneradmin")
+        self.assertIn("Supra.exe inherits nothing from its folder", problems)
+        self.assertIn("Supra.exe gives runnervm\\runneradmin no access", problems)
 
     def test_upgrades_run_on_windows_and_mac_from_an_older_release(self):
         for system in ("Windows", "Darwin"):

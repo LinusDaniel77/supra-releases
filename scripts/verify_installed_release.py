@@ -267,7 +267,40 @@ def smoke(executable, label, evidence, report):
     return output
 
 
-def install_windows(tag, root, evidence, report, prerelease_ok=False):
+#: From this release on, a Windows install outside the user profile and Program
+#: Files is private to the person installing (Supra's desktop/build/installer.nsh,
+#: security audit w2h02). This check installs into RUNNER_TEMP, outside the
+#: profile, so it runs that hook; 0.32.5's attempt left every file unreadable.
+PRIVATE_FOLDER_FROM = (0, 32, 7)
+#: Who may not be let into a private install folder, by name and by SID.
+BROAD_GROUPS = ("BUILTIN\\Users", "NT AUTHORITY\\Authenticated Users", "Everyone",
+                "*S-1-5-32-545", "*S-1-5-11", "*S-1-1-0")
+
+
+def private_folder_problems(folder_acl, exe_acl, user):
+    """What is wrong with an install folder that should be private, from icacls
+    output for the folder and for Supra.exe: [] when it is private and Supra.exe
+    inherits the installing user's access."""
+    problems = []
+    for group in BROAD_GROUPS:
+        # A whole entry, "BUILTIN\\Users:(...)" or "*S-1-5-11:(...)", never part
+        # of another name or SID (S-1-5-113 is not S-1-5-11).
+        name = re.escape(group.lstrip("*"))
+        if re.search(rf"(?:^|[\s*]){name}:", folder_acl, re.IGNORECASE | re.MULTILINE):
+            problems.append(f"the folder still lets {group} in")
+    if "(i)" not in exe_acl.lower():
+        problems.append("Supra.exe inherits nothing from its folder")
+    if user and user.lower() not in exe_acl.lower():
+        problems.append(f"Supra.exe gives {user} no access")
+    return problems
+
+
+def icacls(path):
+    root = os.environ.get("SystemRoot") or "C:\\Windows"
+    return run([str(Path(root) / "System32" / "icacls.exe"), str(path)])
+
+
+def install_windows(tag, root, evidence, report, prerelease_ok=False, checked=False):
     installer = download(tag, f"Supra-Setup-{version(tag)}.exe", root, report, prerelease_ok)
     destination = root / "installed-supra"
     # NSIS /D must be LAST and unquoted, even when the path contains spaces.
@@ -282,11 +315,19 @@ def install_windows(tag, root, evidence, report, prerelease_ok=False):
                              f"(Get-Item -LiteralPath '{escaped}').VersionInfo.ProductVersion"]).strip()
     if not windows_version_matches(installed_version, tag):
         raise RuntimeError(f"Installed version {installed_version!r} does not match {tag}")
+    if checked and version_key(tag) >= PRIVATE_FOLDER_FROM:
+        folder_acl, exe_acl = icacls(destination), icacls(executable)
+        (evidence / f"{tag}-install-folder-acl.txt").write_text(
+            f"{destination}\n{folder_acl}\n{executable}\n{exe_acl}\n", encoding="utf-8")
+        problems = private_folder_problems(folder_acl, exe_acl, run(["whoami"]).strip())
+        if problems:
+            raise RuntimeError(f"{tag}: the install folder is not private: " + "; ".join(problems))
+        report["checks"].append(f"{tag}-install-folder-private")
     output = smoke(executable, f"{tag}-installed-start", evidence, report)
     return executable, output
 
 
-def install_mac(tag, root, evidence, report, prerelease_ok=False):
+def install_mac(tag, root, evidence, report, prerelease_ok=False, checked=False):
     arch = {"arm64": "arm64", "x86_64": "x64"}[platform.machine()]
     dmg = download(tag, f"Supra-Setup-Mac-{arch}.dmg", root, report, prerelease_ok)
     run(["hdiutil", "verify", str(dmg)])
@@ -469,7 +510,7 @@ def main():
                 raise RuntimeError(f"Baseline data directory does not exist: {data}")
             marker = data / "ci-preservation-marker.txt"
             marker.write_text("preserve-existing-project-data", encoding="utf-8")
-        executable, output = install(tag, root, evidence, report, prerelease_ok=before_promotion)
+        executable, output = install(tag, root, evidence, report, prerelease_ok=before_promotion, checked=True)
         if upgrade:
             if reported_data_dir(output, user_data_root()) != data:
                 raise RuntimeError("New installation silently switched its data directory")
