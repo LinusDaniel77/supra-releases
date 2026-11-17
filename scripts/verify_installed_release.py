@@ -268,6 +268,17 @@ def install_windows(tag, root, evidence, report):
     installed_version = run(["pwsh", "-NoProfile", "-Command",
                              f"(Get-Item -LiteralPath '{escaped}').VersionInfo.ProductVersion"]).strip()
     if not windows_version_matches(installed_version, tag):
+        # Diagnosis only (throwaway branch): who is running, and what the folder allows.
+        for label, cmd in (("whoami", ["whoami", "/user", "/groups"]),
+                           ("env", ["cmd", "/c", "echo %USERDOMAIN%\\%USERNAME%"]),
+                           ("icacls folder", ["icacls", str(destination)]),
+                           ("icacls exe", ["icacls", str(executable)])):
+            try:
+                print(f"::group::{label}", flush=True)
+                print(subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout, flush=True)
+                print("::endgroup::", flush=True)
+            except Exception as error:  # noqa: BLE001
+                print(f"{label}: {error}", flush=True)
         raise RuntimeError(f"Installed version {installed_version!r} does not match {tag}")
     output = smoke(executable, f"{tag}-installed-start", evidence, report)
     return executable, output
