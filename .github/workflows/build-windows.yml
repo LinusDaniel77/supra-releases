@@ -45,6 +45,7 @@ jobs:
     timeout-minutes: 120
     outputs:
       installer: ${{ steps.artifact.outputs.installer }}
+      signing_required: ${{ steps.signing.outputs.required }}
 
     # Inputs reach run: scripts only through these variables. An expression
     # spliced into a script is substituted before the shell parses it, so a
@@ -152,6 +153,23 @@ jobs:
           pwsh -File $script -Installer -Channel release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Read whether the source pins an update signing key
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          # desktop/update-keys.json holds the public halves of Supra's update
+          # signing keys (Silvia-Supra desktop/update-signing.js). An app built
+          # with one installs only signed updates, so its release must be
+          # signed: the publish job refuses to publish it unsigned. Older
+          # sources have no such file and are published as before.
+          keys=source/desktop/update-keys.json
+          if [ -f "$keys" ] && grep -q '"public_key"' "$keys"; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Verify installer and record checksum
         id: artifact
         shell: bash
@@ -217,6 +235,41 @@ jobs:
           name: windows-installer
           path: dist
 
+      - name: Sign the update files
+        # The app checks this signature before it installs an update
+        # (Silvia-Supra desktop/update-signing.js): an Ed25519 signature over
+        # "supra-update-v1", the file's name, its SHA-256 and the version, one
+        # line each, made with the key only this secret holds. Without the
+        # secret, a source that pins a key is refused here; one that pins none
+        # is published unsigned, as before.
+        env:
+          SIGNING_KEY: ${{ secrets.SUPRA_UPDATE_SIGNING_KEY }}
+          REQUIRED: ${{ needs.build.outputs.signing_required }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if [ -z "${SIGNING_KEY}" ]; then
+            if [ "${REQUIRED}" = "true" ]; then
+              echo "::error::This source pins an update signing key, and SUPRA_UPDATE_SIGNING_KEY is not set: installed copies would refuse an unsigned update."
+              exit 1
+            fi
+            echo "No signing key, and the source pins none: published unsigned, as before."
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          key="$RUNNER_TEMP/update-key.pem"
+          umask 077
+          printf '%s\n' "${SIGNING_KEY}" > "$key"
+          trap 'rm -f "$key" "$RUNNER_TEMP/update-message"' EXIT
+          for name in "$INSTALLER"; do
+            sha="$(sha256sum "$name" | cut -d' ' -f1)"
+            printf 'supra-update-v1\n%s\n%s\n%s\n' "$name" "$sha" "$version" > "$RUNNER_TEMP/update-message"
+            openssl pkeyutl -sign -inkey "$key" -rawin -in "$RUNNER_TEMP/update-message" | base64 -w0 > "$name.sig"
+            test "$(base64 -d "$name.sig" | wc -c)" -eq 64
+            echo "signed $name"
+          done
+
       - name: Publish public recovery assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,8 +280,12 @@ jobs:
           test -s "$INSTALLER"
           (sha256sum -c "$INSTALLER.sha256")
           cp "$INSTALLER" Supra-Setup.exe
+          signatures=()
+          # The app reads the signature of the file the update feed names.
+          [ -f "$INSTALLER.sig" ] && signatures+=("$INSTALLER.sig")
           gh release upload "${RELEASE_TAG}" \
             "$INSTALLER" \
             "$INSTALLER.sha256" \
+            "${signatures[@]}" \
             Supra-Setup.exe latest.yml INSTALLER_STAMP.json \
             --repo "$GITHUB_REPOSITORY" --clobber

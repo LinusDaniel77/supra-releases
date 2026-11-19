@@ -43,6 +43,8 @@ jobs:
     name: Build and verify macOS ${{ inputs.architecture }}
     runs-on: ${{ inputs.architecture == 'arm64' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 120
+    outputs:
+      signing_required: ${{ steps.signing.outputs.required }}
     # Inputs reach run: scripts only through these variables. An expression
     # spliced into a script is substituted before the shell parses it, so a
     # value with a quote or $(...) in it would run as code.
@@ -114,6 +116,23 @@ jobs:
           script=scripts/release/build_desktop_macos.py
           [ -f "$script" ] || script=scripts/build_desktop_macos.py
           python3 "$script" --installer
+
+      - name: Read whether the source pins an update signing key
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          # desktop/update-keys.json holds the public halves of Supra's update
+          # signing keys (Silvia-Supra desktop/update-signing.js). An app built
+          # with one installs only signed updates, so its release must be
+          # signed: the publish job refuses to publish it unsigned. Older
+          # sources have no such file and are published as before.
+          keys=source/desktop/update-keys.json
+          if [ -f "$keys" ] && grep -q '"public_key"' "$keys"; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify installer and record checksum
         id: artifact
@@ -233,6 +252,41 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Sign the update files
+        # The app checks this signature before it installs an update
+        # (Silvia-Supra desktop/update-signing.js): an Ed25519 signature over
+        # "supra-update-v1", the file's name, its SHA-256 and the version, one
+        # line each, made with the key only this secret holds. Without the
+        # secret, a source that pins a key is refused here; one that pins none
+        # is published unsigned, as before.
+        env:
+          SIGNING_KEY: ${{ secrets.SUPRA_UPDATE_SIGNING_KEY }}
+          REQUIRED: ${{ needs.build.outputs.signing_required }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if [ -z "${SIGNING_KEY}" ]; then
+            if [ "${REQUIRED}" = "true" ]; then
+              echo "::error::This source pins an update signing key, and SUPRA_UPDATE_SIGNING_KEY is not set: installed copies would refuse an unsigned update."
+              exit 1
+            fi
+            echo "No signing key, and the source pins none: published unsigned, as before."
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          key="$RUNNER_TEMP/update-key.pem"
+          umask 077
+          printf '%s\n' "${SIGNING_KEY}" > "$key"
+          trap 'rm -f "$key" "$RUNNER_TEMP/update-message"' EXIT
+          for name in "Supra-Setup-Mac-${ARCHITECTURE}.dmg"; do
+            sha="$(sha256sum "$name" | cut -d' ' -f1)"
+            printf 'supra-update-v1\n%s\n%s\n%s\n' "$name" "$sha" "$version" > "$RUNNER_TEMP/update-message"
+            openssl pkeyutl -sign -inkey "$key" -rawin -in "$RUNNER_TEMP/update-message" | base64 -w0 > "$name.sig"
+            test "$(base64 -d "$name.sig" | wc -c)" -eq 64
+            echo "signed $name"
+          done
+
       - name: Publish public recovery assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -244,7 +298,9 @@ jobs:
           metadata="latest-mac-${ARCHITECTURE}.yml"
           test -s "$dmg" && test -s "$metadata"
           shasum -a 256 -c "$dmg.sha256"
-          gh release upload "${RELEASE_TAG}" "$dmg" "$dmg.sha256" "$metadata" \
+          signatures=()
+          [ -f "$dmg.sig" ] && signatures+=("$dmg.sig")
+          gh release upload "${RELEASE_TAG}" "$dmg" "$dmg.sha256" "${signatures[@]}" "$metadata" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
           # The updater reads one channel file on both Mac architectures. Once
